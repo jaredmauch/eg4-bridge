@@ -64,12 +64,22 @@ inverters:
 
 # List of databases to store data in
 databases:
-- enabled: false  # Required: Whether this database is enabled
-  url: postgres://eg4:eg4@localhost/eg4  # Required: Database connection URL
+- enabled: true  # Required: Whether this database is enabled
+  url: postgres://user@localhost/eg4_bridge  # Required: Database connection URL
   # Supported database types:
-  # - PostgreSQL: postgres://user:pass@host/db
+  # - PostgreSQL (recommended): postgres://user:pass@host/db
   # - MySQL: mysql://user:pass@host/db
   # - SQLite: sqlite://path/to/db
+  # 
+  # PostgreSQL Connection Examples:
+  # Localhost with password: postgres://user:password@localhost:5432/database
+  # Localhost without password (trust): postgres://user@localhost/database
+  # Unix socket: postgres://user@/database?host=/var/run/postgresql
+  # Custom socket path: postgres://user@/database?host=/tmp
+  # 
+  # Other Database Examples:
+  # MySQL: mysql://user:password@localhost:3306/database
+  # SQLite: sqlite:///app/data/eg4.db
 
 # MQTT configuration
 mqtt:

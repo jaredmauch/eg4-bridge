@@ -28,7 +28,7 @@ crc16 = "0.4.0"
 env_logger = { version = "0.11.3", default-features = false, features = [] }
 futures = "0.3.30"
 log = "0.4.21"
-net2 = "0.2.39"
+socket2 = "0.5"
 nom = "7.1.3"
 nom-derive = "0.10.1"
 num_enum = "0.7.2"
@@ -45,5 +45,5 @@ enum_dispatch = "0.3.12"
 async-trait = "0.1.77"
 reqwest = "0.12.0"
 rinfluxdb = { version = "~0.1", git = "https://gitlab.com/celsworth/rinfluxdb.git", rev = "f3f5b23e" }
-sqlx = { version = "0.8.1", features = ["runtime-tokio-native-tls", "any", "sqlite", "chrono", "migrate"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio-native-tls", "any", "sqlite", "postgres", "chrono", "migrate"] }
 url = "2.5.0"

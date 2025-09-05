@@ -4,6 +4,56 @@ eg4-bridge is a tool for monitoring and controlling EG4 inverters locally. It is
 
 It allows you to monitor and possibly control your inverter locally.
 
+## Database Support
+
+eg4-bridge supports multiple database backends for storing inverter data:
+
+- **PostgreSQL** - Recommended for production use
+- **MySQL** - Alternative production database
+- **SQLite** - Lightweight option for development and testing
+
+Database migrations are automatically applied on startup.
+
+### PostgreSQL Connection Methods
+
+eg4-bridge supports multiple PostgreSQL connection methods:
+
+#### Localhost Connection
+```yaml
+databases:
+- enabled: true
+  url: postgres://username@localhost/database_name
+  # With password: postgres://username:password@localhost:5432/database_name
+```
+
+#### Unix Socket Connection
+**Note**: Unix socket connections require URL validation improvements. For now, use localhost connections.
+
+```yaml
+databases:
+- enabled: true
+  # This format is valid for PostgreSQL but needs URL validation fix:
+  url: postgres://username@/database_name?host=/var/run/postgresql
+  # Custom socket path: postgres://username@/database_name?host=/tmp
+```
+
+**Workaround**: Use localhost with Unix socket by configuring PostgreSQL to listen on localhost:
+```yaml
+databases:
+- enabled: true
+  url: postgres://username@localhost/database_name
+```
+
+#### Trust Authentication (No Password)
+When using trust authentication (common for localhost connections):
+```yaml
+databases:
+- enabled: true
+  url: postgres://user@localhost/eg4_bridge
+```
+
+See `config.yaml.example` for complete database configuration options.
+
 ## Home Assistant add-on (UNMAINTAINED)
 Click the icon below to add this repository to your Home Assistant instance or follow the procedure highlighted on the [Home Assistant website](https://home-assistant.io/hassio/installing_third_party_addons).
 

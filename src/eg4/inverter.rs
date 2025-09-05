@@ -7,7 +7,7 @@ use {
     serde::{Serialize, Serializer},
     tokio::io::{AsyncReadExt, AsyncWriteExt},
     std::time::Duration,
-    net2::TcpStreamExt,
+    socket2::Socket,
     std::sync::{Arc, Mutex},
     std::time::Instant,
     std::sync::atomic::{AtomicU64, Ordering},
@@ -383,24 +383,27 @@ impl Inverter {
         // Configure TCP socket
         debug!("Configuring TCP socket options");
         let std_stream = stream.into_std()?;
-        if let Err(e) = std_stream.set_keepalive(Some(Duration::new(TCP_KEEPALIVE_SECS, 0))) {
+        let socket = Socket::from(std_stream);
+        
+        // Set TCP keepalive
+        if let Err(e) = socket.set_keepalive(true) {
             warn!("Failed to set TCP keepalive: {}", e);
             debug!("Detailed TCP keepalive error: {:?}", e);
         } else {
-            debug!("TCP keepalive set to {} seconds", TCP_KEEPALIVE_SECS);
+            debug!("TCP keepalive enabled");
         }
-        
-        let stream = tokio::net::TcpStream::from_std(std_stream)?;
         
         // Set TCP_NODELAY based on configuration
         if inverter_config.use_tcp_nodelay() {
-            if let Err(e) = stream.set_nodelay(true) {
+            if let Err(e) = socket.set_nodelay(true) {
                 warn!("Failed to set TCP_NODELAY: {}", e);
                 debug!("Detailed TCP_NODELAY error: {:?}", e);
             } else {
                 debug!("TCP_NODELAY enabled");
             }
         }
+        
+        let stream = tokio::net::TcpStream::from_std(socket.into())?;
 
         debug!("TCP socket configuration complete");
 

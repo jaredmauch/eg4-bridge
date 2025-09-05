@@ -309,6 +309,16 @@ impl Coordinator {
             })
             .collect();
         
+        // Start database tasks
+        for database in &self.databases {
+            let database_clone = database.clone();
+            tokio::spawn(async move {
+                if let Err(e) = database_clone.start().await {
+                    error!("Database task failed: {}", e);
+                }
+            });
+        }
+        
         // Verify subscribers are ready
         info!("Verifying subscribers...");
         

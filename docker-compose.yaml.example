@@ -1,13 +1,79 @@
 version: '3.4'
 
 services:
- lxp-bridge:
-   container_name: lxp-bridge
-   image: celsworth/lxp-bridge:latest
-   restart: unless-stopped
-   init: true
-   volumes:
-   - type: bind
-     source: ${PWD}/config.yaml
-     target: /etc/config.yaml
+  # PostgreSQL database (recommended for production)
+  postgres:
+    image: postgres:15
+    container_name: eg4-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: eg4
+      POSTGRES_USER: eg4
+      POSTGRES_PASSWORD: eg4
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # Alternative: MySQL database
+  mysql:
+    image: mysql:8.0
+    container_name: eg4-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: eg4
+      MYSQL_USER: eg4
+      MYSQL_PASSWORD: eg4
+      MYSQL_ROOT_PASSWORD: rootpassword
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+
+  # InfluxDB for time-series data
+  influxdb:
+    image: influxdb:1.8
+    container_name: eg4-influxdb
+    restart: unless-stopped
+    environment:
+      INFLUXDB_DB: eg4
+      INFLUXDB_ADMIN_USER: admin
+      INFLUXDB_ADMIN_PASSWORD: admin
+      INFLUXDB_USER: eg4
+      INFLUXDB_USER_PASSWORD: eg4
+    volumes:
+      - influx_data:/var/lib/influxdb
+    ports:
+      - "8086:8086"
+
+  # eg4-bridge application
+  eg4-bridge:
+    container_name: eg4-bridge
+    image: celsworth/lxp-bridge:latest
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - postgres
+      - influxdb
+    volumes:
+      - type: bind
+        source: ${PWD}/config.yaml
+        target: /etc/config.yaml
+      - type: bind
+        source: ${PWD}/data
+        target: /app/data
+      # For Unix socket connection (if using host networking)
+      - type: bind
+        source: /var/run/postgresql
+        target: /var/run/postgresql
+        read_only: true
+    ports:
+      - "8000:8000"
+    # Alternative: Use host networking for Unix socket access
+    # network_mode: "host"
+
+volumes:
+  postgres_data:
+  mysql_data:
+  influx_data:
 
