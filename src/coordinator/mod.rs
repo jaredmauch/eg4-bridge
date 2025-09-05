@@ -278,7 +278,15 @@ impl Coordinator {
         if self.config.mqtt().enabled() {
             info!("Initializing MQTT");
             let mqtt = Arc::new(Mqtt::new((*self.config).clone(), self.channels.clone(), self.shared_stats.clone()));
+            let mqtt_clone = mqtt.clone();
             self.mqtt = Some(mqtt);
+            
+            // Spawn the MQTT task
+            tokio::spawn(async move {
+                if let Err(e) = mqtt_clone.start().await {
+                    error!("MQTT task failed: {}", e);
+                }
+            });
         }
         
         // Initialize InfluxDB client if enabled

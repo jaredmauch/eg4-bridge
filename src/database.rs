@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use sqlx::{any::AnyConnectOptions, Pool, Any};
+use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool};
 use std::sync::RwLock;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -23,7 +23,7 @@ enum DatabaseType {
 pub struct Database {
     config: config::Database,
     channels: Channels,
-    pool: Arc<RwLock<Option<Pool<Any>>>>,
+    pool: Arc<RwLock<Option<PgPool>>>,
     shared_stats: Arc<Mutex<PacketStats>>,
 }
 
@@ -66,18 +66,27 @@ impl Database {
     }
 
     async fn connect(&self) -> Result<()> {
-        let options = AnyConnectOptions::from_str(self.config.url())?;
-        let pool = sqlx::any::AnyPoolOptions::new()
-            .max_connections(5)
-            .min_connections(1)
-            .acquire_timeout(std::time::Duration::from_secs(30))
-            .connect_with(options)
-            .await?;
-        *self.pool.write().map_err(|_| anyhow::anyhow!("Failed to acquire write lock"))? = Some(pool);
-        Ok(())
+        info!("Connecting to database: {}", self.config.url());
+        
+        // For now, only support PostgreSQL
+        match self.database()? {
+            DatabaseType::Postgres => {
+                let options = PgConnectOptions::from_str(self.config.url())?;
+                let pool = PgPoolOptions::new()
+                    .max_connections(5)
+                    .min_connections(1)
+                    .acquire_timeout(std::time::Duration::from_secs(30))
+                    .connect_with(options)
+                    .await?;
+                info!("Database connected successfully");
+                *self.pool.write().map_err(|_| anyhow::anyhow!("Failed to acquire write lock"))? = Some(pool);
+                Ok(())
+            }
+            _ => Err(anyhow::anyhow!("Only PostgreSQL is currently supported"))
+        }
     }
 
-    pub async fn connection(&self) -> Result<Pool<Any>> {
+    pub async fn connection(&self) -> Result<PgPool> {
         match &*self.pool.read().map_err(|_| anyhow::anyhow!("Failed to acquire read lock"))? {
             Some(pool) => Ok(pool.clone()),
             None => Err(anyhow::anyhow!("database.rs:Database not connected"))
@@ -85,18 +94,15 @@ impl Database {
     }
 
     async fn migrate(&self) -> Result<()> {
-        use DatabaseType::*;
-
+        info!("Starting database migration");
         let pool = self.connection().await?;
 
-        // work out migration directory to use based on database url
-        let migrator = match self.database()? {
-            SQLite => sqlx::migrate!("db/migrations/sqlite"),
-            MySQL => sqlx::migrate!("db/migrations/mysql"),
-            Postgres => sqlx::migrate!("db/migrations/postgres"),
-        };
+        // Use PostgreSQL migrations
+        let migrator = sqlx::migrate!("db/migrations/postgres");
 
+        info!("Running database migrations");
         migrator.run(&pool).await?;
+        info!("Database migration completed successfully");
 
         Ok(())
     }
