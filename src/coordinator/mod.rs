@@ -482,7 +482,7 @@ impl Coordinator {
         info!("Verifying subscribers...");
 
         // Check datalog writer subscriber if configured
-        if let Some(writer) = &self.datalog_writer {
+        if let Some(_writer) = &self.datalog_writer {
             let receiver = self.channels.from_inverter.subscribe();
             if receiver.is_closed() {
                 error!("Datalog writer channel is closed - this is a fatal error");
@@ -966,7 +966,7 @@ impl Coordinator {
     }
 
     async fn send_to_mqtt(&self, data: &TranslatedData) -> Result<()> {
-        if let Some(mqtt) = &self.mqtt {
+        if let Some(_mqtt) = &self.mqtt {
             let messages = mqtt::Message::for_input(data.clone(), true)?;
             for message in messages {
                 self.channels.to_mqtt.send(mqtt::ChannelData::Message(message))?;

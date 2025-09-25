@@ -395,7 +395,7 @@ impl Inverter {
         
         // Set TCP_NODELAY based on configuration
         if inverter_config.use_tcp_nodelay() {
-            if let Err(e) = socket.set_nodelay(true) {
+            if let Err(e) = socket.set_tcp_nodelay(true) {
                 warn!("Failed to set TCP_NODELAY: {}", e);
                 debug!("Detailed TCP_NODELAY error: {:?}", e);
             } else {
