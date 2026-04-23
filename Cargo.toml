@@ -41,7 +41,6 @@ serde_yaml = "0.9.32"
 tokio = { version = "1.36.0", features = ["net", "macros", "signal", "rt-multi-thread"] }
 tokio-util = { version = "0.7.10", features = ["codec"] }
 chrono = { version = "0.4.35", features = ["serde"] }
-cron-parser = "0.10.0"
 enum_dispatch = "0.3.12"
 async-trait = "0.1.77"
 reqwest = "0.12.0"

@@ -361,15 +361,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "338089f42c427b86394a5ee60ff321da23a5c89c9d89514c829687b26359fcff"
 
 [[package]]
-name = "cron-parser"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baa5650eabdaa360e2c240c2a5f544f10185b439cd76d748e44e3f28128a016b"
-dependencies = [
- "chrono",
-]
-
-[[package]]
 name = "crossbeam-queue"
 version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -515,7 +506,6 @@ dependencies = [
  "chrono",
  "clap",
  "crc16",
- "cron-parser",
  "enum_dispatch",
  "env_logger",
  "futures",
