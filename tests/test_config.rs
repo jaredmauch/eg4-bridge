@@ -4,6 +4,7 @@ use eg4_bridge::mqtt;
 use eg4_bridge::config;
 use eg4_bridge::eg4;
 use std::str::FromStr;
+use std::io::Write;
 use serde_json::json;
 use eg4_bridge::config::Config;
 
@@ -23,6 +24,44 @@ fn config_returns_ok() {
     let config = Config::new("config.yaml.example".to_owned());
 
     assert!(config.is_ok());
+}
+
+#[test]
+fn config_rejects_invalid_register_block_size() {
+    let mut temp = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        temp,
+        r#"
+loglevel: info
+strict_data_check: false
+homeassistant_enabled: false
+read_only: false
+register_read_interval: 60
+inverters:
+  - enabled: true
+    host: 127.0.0.1
+    port: 8000
+    serial: "5555555555"
+    datalog: "2222222222"
+    register_block_size: 127
+mqtt:
+  enabled: false
+  host: localhost
+influx:
+  enabled: false
+  url: http://localhost:8086
+  database: eg4
+databases: []
+"#
+    )
+    .unwrap();
+
+    let err = Config::new(temp.path().to_string_lossy().to_string()).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("register_block_size") || err_msg.contains("must be 40"),
+        "expected register_block_size validation error, got: {err_msg}"
+    );
 }
 
 #[test]

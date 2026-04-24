@@ -586,6 +586,15 @@ impl Config {
                 if inv.read_timeout.unwrap_or(900) == 0 {
                     return Err(anyhow!("config.rs:Invalid read timeout: 0"));
                 }
+                if let Some(register_block_size) = inv.register_block_size {
+                    if register_block_size != 40 {
+                        bail!(
+                            "inverter[{}].register_block_size={} is invalid; the current implementation only supports a register_block_size of 40",
+                            i,
+                            register_block_size
+                        );
+                    }
+                }
             }
         }
 
