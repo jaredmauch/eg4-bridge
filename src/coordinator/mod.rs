@@ -137,6 +137,7 @@ pub struct Coordinator {
     config: Arc<ConfigWrapper>,
     channels: Channels,
     shared_stats: Arc<Mutex<PacketStats>>,
+    inputs_store: Arc<Mutex<InputsStore>>,
     datalog_writer: Option<Arc<DatalogWriter>>,
     influx: Option<Arc<Influx>>,
     mqtt: Option<Arc<Mqtt>>,
@@ -220,6 +221,7 @@ impl Coordinator {
             config,
             channels,
             shared_stats,
+            inputs_store: Arc::new(Mutex::new(InputsStore::new())),
             datalog_writer: None,
             influx: None,
             mqtt: None,
@@ -577,6 +579,11 @@ impl Coordinator {
                     }
                 }
 
+                // Send to databases (e.g. PostgreSQL) when input blocks can be decoded.
+                if let Err(e) = self.send_to_database(&td) {
+                    error!("Failed to send data to database channel: {}", e);
+                }
+
                 // Cache register values
                 if let Err(e) = self.cache_register(td.register, td.values.clone()) {
                     error!("Failed to cache register {}: {}", td.register, e);
@@ -930,6 +937,99 @@ impl Coordinator {
         for message in messages {
             self.channels.to_mqtt.send(mqtt::ChannelData::Message(message))?;
         }
+        Ok(())
+    }
+
+    fn send_to_database(&self, data: &TranslatedData) -> Result<()> {
+        use crate::eg4::packet::ReadInput;
+
+        if self.databases.is_empty() {
+            debug!("No databases configured, skipping send");
+            return Ok(());
+        }
+
+        if data.device_function != DeviceFunction::ReadInput {
+            return Ok(());
+        }
+
+        let parsed = match data.read_input() {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                debug!("Skipping database write for undecodable input payload: {}", err);
+                return Ok(());
+            }
+        };
+
+        let maybe_input_all = match parsed {
+            ReadInput::ReadInputAll(input_all) => Some(*input_all),
+            ReadInput::ReadInput1(r1) => {
+                let mut store = self
+                    .inputs_store
+                    .lock()
+                    .map_err(|_| anyhow!("Failed to lock input store"))?;
+                let entry = store.entry(data.datalog).or_default();
+                entry.set_read_input_1(r1);
+                entry.to_input_all()
+            }
+            ReadInput::ReadInput2(r2) => {
+                let mut store = self
+                    .inputs_store
+                    .lock()
+                    .map_err(|_| anyhow!("Failed to lock input store"))?;
+                let entry = store.entry(data.datalog).or_default();
+                entry.set_read_input_2(r2);
+                entry.to_input_all()
+            }
+            ReadInput::ReadInput3(r3) => {
+                let mut store = self
+                    .inputs_store
+                    .lock()
+                    .map_err(|_| anyhow!("Failed to lock input store"))?;
+                let entry = store.entry(data.datalog).or_default();
+                entry.set_read_input_3(r3);
+                entry.to_input_all()
+            }
+            ReadInput::ReadInput4(r4) => {
+                let mut store = self
+                    .inputs_store
+                    .lock()
+                    .map_err(|_| anyhow!("Failed to lock input store"))?;
+                let entry = store.entry(data.datalog).or_default();
+                entry.set_read_input_4(r4);
+                entry.to_input_all()
+            }
+            ReadInput::ReadInput5(r5) => {
+                let mut store = self
+                    .inputs_store
+                    .lock()
+                    .map_err(|_| anyhow!("Failed to lock input store"))?;
+                let entry = store.entry(data.datalog).or_default();
+                entry.set_read_input_5(r5);
+                entry.to_input_all()
+            }
+            ReadInput::ReadInput6(r6) => {
+                let mut store = self
+                    .inputs_store
+                    .lock()
+                    .map_err(|_| anyhow!("Failed to lock input store"))?;
+                let entry = store.entry(data.datalog).or_default();
+                entry.set_read_input_6(r6);
+                entry.to_input_all()
+            }
+        };
+
+        if let Some(input_all) = maybe_input_all {
+            let _ = self
+                .inputs_store
+                .lock()
+                .map_err(|_| anyhow!("Failed to lock input store"))?
+                .remove(&data.datalog);
+            self.channels
+                .to_database
+                .send(database::ChannelData::ReadInputAll(Box::new(input_all)))
+                .map_err(|e| anyhow!("Failed to send data to database channel: {}", e))?;
+        }
+
         Ok(())
     }
 

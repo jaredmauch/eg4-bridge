@@ -24,7 +24,7 @@ mod common;
 use common::*;
 use eg4_bridge::eg4::packet::{DeviceFunction, Packet, TranslatedData};
 use eg4_bridge::prelude::*;
-use eg4_bridge::{config, eg4, mqtt};
+use eg4_bridge::{config, database, eg4, mqtt};
 use mockito::Matcher;
 use serde_json::json;
 use std::sync::Arc;
@@ -180,12 +180,86 @@ async fn forwards_read_input_all_to_mqtt_and_influx() {
         assert_eq!(payload["v_pv_1"], json!(25.7));
 
         let d = unwrap_influx_channeldata_input_data(to_influx.recv().await?);
-        assert_eq!(d["soc"], 1);
+        assert_eq!(d["register"], 0);
+        assert_eq!(d["device_function"], "ReadInput");
         assert_eq!(d["v_pv_1"], 25.7);
 
         coord_stop.stop();
 
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        mock.assert();
+
+        Ok::<(), anyhow::Error>(())
+    };
+
+    futures::try_join!(coordinator.start(), tf).unwrap();
+}
+
+#[tokio::test]
+async fn forwards_read_input_all_to_influx_and_database_channels() {
+    let _mqtt_guard = SkipMqttBrokerGuard::set();
+    common_setup();
+
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("POST", "/write")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("db".to_owned(), "eg4".to_owned()),
+            Matcher::UrlEncoded("precision".to_owned(), "s".to_owned()),
+        ]))
+        .match_body(Matcher::Any)
+        .with_status(204)
+        .expect(1)
+        .create();
+
+    let mut c = quiet_bridge_config();
+    c.influx.enabled = true;
+    c.influx.url = server.url();
+    c.influx.username = None;
+    c.influx.password = None;
+    c.mqtt.enabled = false;
+    c.databases = vec![config::Database {
+        enabled: true,
+        // Intentionally invalid target for this test; we only assert coordinator fan-out.
+        url: "postgres://eg4:eg4@127.0.0.1:1/eg4".to_owned(),
+    }];
+
+    let config = arc_config(c);
+    let inverter = config.inverters()[0].clone();
+    let datalog = inverter.datalog().expect("example inverter has datalog");
+    let channels = Channels::new();
+    let mut coordinator = Coordinator::new(config, channels.clone());
+    let coord_stop = coordinator.clone();
+
+    let tf = async move {
+        let mut to_influx = channels.to_influx.subscribe();
+        let mut to_db = channels.to_database.subscribe();
+
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        let packet = Packet::TranslatedData(TranslatedData {
+            datalog,
+            device_function: DeviceFunction::ReadInput,
+            inverter: inverter.serial().expect("example inverter has serial"),
+            register: 0,
+            values: vec![1; 254],
+        });
+        channels
+            .from_inverter
+            .send(eg4::inverter::ChannelData::Packet(packet.clone()))?;
+
+        let d = unwrap_influx_channeldata_input_data(to_influx.recv().await?);
+        assert_eq!(d["register"], 0);
+        assert_eq!(d["device_function"], "ReadInput");
+
+        let db_msg = to_db.recv().await?;
+        let database::ChannelData::ReadInputAll(input_all) = db_msg else {
+            panic!("expected database ReadInputAll message");
+        };
+        assert_eq!(input_all.soc, 1);
+
+        coord_stop.stop();
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         mock.assert();
 
         Ok::<(), anyhow::Error>(())
