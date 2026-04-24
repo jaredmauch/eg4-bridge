@@ -953,6 +953,19 @@ impl Coordinator {
         Ok(())
     }
 
+    fn update_inputs_store<F>(&self, datalog: Serial, updater: F) -> Result<Option<crate::eg4::packet::ReadInputAll>>
+    where
+        F: FnOnce(&mut crate::eg4::packet::ReadInputs),
+    {
+        let mut store = self
+            .inputs_store
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock input store"))?;
+        let entry = store.entry(datalog).or_default();
+        updater(entry);
+        Ok(entry.to_input_all())
+    }
+
     fn send_to_database(&self, data: &TranslatedData, parsed_input: Option<&ReadInput>) -> Result<()> {
         if self.databases.is_empty() {
             debug!("No databases configured, skipping send");
@@ -969,60 +982,12 @@ impl Coordinator {
 
         let maybe_input_all = match parsed.clone() {
             ReadInput::ReadInputAll(input_all) => Some(*input_all),
-            ReadInput::ReadInput1(r1) => {
-                let mut store = self
-                    .inputs_store
-                    .lock()
-                    .map_err(|_| anyhow!("Failed to lock input store"))?;
-                let entry = store.entry(data.datalog).or_default();
-                entry.set_read_input_1(r1);
-                entry.to_input_all()
-            }
-            ReadInput::ReadInput2(r2) => {
-                let mut store = self
-                    .inputs_store
-                    .lock()
-                    .map_err(|_| anyhow!("Failed to lock input store"))?;
-                let entry = store.entry(data.datalog).or_default();
-                entry.set_read_input_2(r2);
-                entry.to_input_all()
-            }
-            ReadInput::ReadInput3(r3) => {
-                let mut store = self
-                    .inputs_store
-                    .lock()
-                    .map_err(|_| anyhow!("Failed to lock input store"))?;
-                let entry = store.entry(data.datalog).or_default();
-                entry.set_read_input_3(r3);
-                entry.to_input_all()
-            }
-            ReadInput::ReadInput4(r4) => {
-                let mut store = self
-                    .inputs_store
-                    .lock()
-                    .map_err(|_| anyhow!("Failed to lock input store"))?;
-                let entry = store.entry(data.datalog).or_default();
-                entry.set_read_input_4(r4);
-                entry.to_input_all()
-            }
-            ReadInput::ReadInput5(r5) => {
-                let mut store = self
-                    .inputs_store
-                    .lock()
-                    .map_err(|_| anyhow!("Failed to lock input store"))?;
-                let entry = store.entry(data.datalog).or_default();
-                entry.set_read_input_5(r5);
-                entry.to_input_all()
-            }
-            ReadInput::ReadInput6(r6) => {
-                let mut store = self
-                    .inputs_store
-                    .lock()
-                    .map_err(|_| anyhow!("Failed to lock input store"))?;
-                let entry = store.entry(data.datalog).or_default();
-                entry.set_read_input_6(r6);
-                entry.to_input_all()
-            }
+            ReadInput::ReadInput1(r1) => self.update_inputs_store(data.datalog, |entry| entry.set_read_input_1(r1))?,
+            ReadInput::ReadInput2(r2) => self.update_inputs_store(data.datalog, |entry| entry.set_read_input_2(r2))?,
+            ReadInput::ReadInput3(r3) => self.update_inputs_store(data.datalog, |entry| entry.set_read_input_3(r3))?,
+            ReadInput::ReadInput4(r4) => self.update_inputs_store(data.datalog, |entry| entry.set_read_input_4(r4))?,
+            ReadInput::ReadInput5(r5) => self.update_inputs_store(data.datalog, |entry| entry.set_read_input_5(r5))?,
+            ReadInput::ReadInput6(r6) => self.update_inputs_store(data.datalog, |entry| entry.set_read_input_6(r6))?,
         };
 
         if let Some(input_all) = maybe_input_all {
