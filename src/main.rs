@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     info!("Starting eg4-bridge {}", CARGO_PKG_VERSION);
 
     // Create a channel for shutdown signaling
-    let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+    let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
 
     // Run the application
     let _app_handle = tokio::spawn(async move {

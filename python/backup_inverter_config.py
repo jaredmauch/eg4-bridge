@@ -409,7 +409,7 @@ def create_modbus_client(host: str, port: int) -> pymodbus.client.ModbusTcpClien
         strict=False,
         tcp_nodelay=True,  # Enable TCP_NODELAY for lower latency
         tcp_keepalive=True,  # Enable TCP keepalive
-        tcp_keepalive_interval=60  # 60 second keepalive interval (matching Rust TCP_KEEPALIVE_SECS)
+        tcp_keepalive_interval=60  # 60 second keepalive interval
     )
     logger.debug("Modbus client created with settings:")
     logger.debug(f"  Timeout: 5s")

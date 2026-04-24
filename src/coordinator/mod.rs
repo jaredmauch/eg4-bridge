@@ -13,9 +13,6 @@ use commands::time_register_ops::{Action, ReadTimeRegister};
 
 use std::sync::{Arc, Mutex};
 
-// Sleep durations - keeping only the ones actively used
-const RETRY_DELAY_MS: u64 = 1000;    // 1 second
-
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum ChannelData {
     Shutdown,
@@ -242,7 +239,7 @@ impl Coordinator {
         let _ = self.channels.to_register_cache.send(register_cache::ChannelData::Shutdown);
     }
 
-    async fn start(&mut self) -> Result<()> {
+    pub async fn start(&mut self) -> Result<()> {
         // Initialize all components in dependency order
         info!("Initializing components...");
         
@@ -274,19 +271,26 @@ impl Coordinator {
             info!("Datalog writer initialized successfully");
         }
         
-        // Initialize MQTT client if enabled
+        // Initialize MQTT client if enabled (integration tests can set EG4_TEST_SKIP_MQTT_BROKER=1
+        // to exercise `to_mqtt` / `from_mqtt` without a real broker).
         if self.config.mqtt().enabled() {
-            info!("Initializing MQTT");
-            let mqtt = Arc::new(Mqtt::new((*self.config).clone(), self.channels.clone(), self.shared_stats.clone()));
-            let mqtt_clone = mqtt.clone();
-            self.mqtt = Some(mqtt);
-            
-            // Spawn the MQTT task
-            tokio::spawn(async move {
-                if let Err(e) = mqtt_clone.start().await {
-                    error!("MQTT task failed: {}", e);
-                }
-            });
+            let skip_broker = std::env::var("EG4_TEST_SKIP_MQTT_BROKER")
+                .map(|v| v == "1")
+                .unwrap_or(false);
+            if skip_broker {
+                info!("MQTT enabled; skipping broker connection (EG4_TEST_SKIP_MQTT_BROKER=1)");
+            } else {
+                info!("Initializing MQTT");
+                let mqtt = Arc::new(Mqtt::new((*self.config).clone(), self.channels.clone(), self.shared_stats.clone()));
+                let mqtt_clone = mqtt.clone();
+                self.mqtt = Some(mqtt);
+
+                tokio::spawn(async move {
+                    if let Err(e) = mqtt_clone.start().await {
+                        error!("MQTT task failed: {}", e);
+                    }
+                });
+            }
         }
         
         // Initialize InfluxDB client if enabled
@@ -380,6 +384,12 @@ impl Coordinator {
 
         info!("All required subscribers are ready");
 
+        // Subscribe before starting inverters so messages are not dropped while inverter TCP
+        // connections are still establishing.
+        let mut from_inverter_rx = self.channels.from_inverter.subscribe();
+        let mut to_coordinator_rx = self.channels.to_coordinator.subscribe();
+        let mut from_mqtt_rx = self.channels.from_mqtt.subscribe();
+
         // Create and start inverters
         info!("Creating and starting inverters...");
         let inverters: Vec<_> = self.config
@@ -396,10 +406,6 @@ impl Coordinator {
             }
         }
         info!("All inverters started successfully");
-
-        // Start the main loop to process inverter data
-        let mut from_inverter_rx = self.channels.from_inverter.subscribe();
-        let mut to_coordinator_rx = self.channels.to_coordinator.subscribe();
 
         info!("Starting main coordinator loop");
         loop {
@@ -471,75 +477,27 @@ impl Coordinator {
                         }
                     }
                 }
+
+                // MQTT commands injected via `from_mqtt` (broker receiver or tests)
+                msg = from_mqtt_rx.recv() => {
+                    match msg {
+                        Ok(mqtt::ChannelData::Message(message)) => {
+                            if let Err(e) = self.process_message(message).await {
+                                error!("Failed to process MQTT command message: {}", e);
+                            }
+                        }
+                        Ok(mqtt::ChannelData::Shutdown) => {
+                            debug!("from_mqtt shutdown");
+                        }
+                        Err(e) => {
+                            error!("Error receiving from MQTT channel: {}", e);
+                        }
+                    }
+                }
             }
         }
 
         info!("Coordinator main loop exiting");
-        Ok(())
-    }
-
-    async fn verify_subscribers(&self) -> Result<()> {
-        info!("Verifying subscribers...");
-
-        // Check datalog writer subscriber if configured
-        if let Some(_writer) = &self.datalog_writer {
-            let receiver = self.channels.from_inverter.subscribe();
-            if receiver.is_closed() {
-                error!("Datalog writer channel is closed - this is a fatal error");
-                bail!("Datalog writer channel is closed");
-            }
-            info!("Datalog writer subscriber is ready");
-        } else {
-            info!("Datalog writer not configured, skipping verification");
-        }
-
-        // Check InfluxDB subscriber if enabled
-        if self.config.influx().enabled() {
-            let receiver = self.channels.to_influx.subscribe();
-            if receiver.is_closed() {
-                error!("InfluxDB channel is closed - this is a fatal error");
-                bail!("InfluxDB channel is closed");
-            }
-            info!("InfluxDB subscriber is ready");
-        } else {
-            info!("InfluxDB not configured, skipping verification");
-        }
-
-        // Check MQTT subscriber if enabled
-        if self.config.mqtt().enabled() {
-            let receiver = self.channels.to_mqtt.subscribe();
-            if receiver.is_closed() {
-                error!("MQTT channel is closed - this is a fatal error");
-                bail!("MQTT channel is closed");
-            }
-            info!("MQTT subscriber is ready");
-        } else {
-            info!("MQTT not configured, skipping verification");
-        }
-
-        // Check database subscribers if configured
-        if !self.databases.is_empty() {
-            let receiver = self.channels.to_database.subscribe();
-            if receiver.is_closed() {
-                error!("Database channel is closed - this is a fatal error");
-                bail!("Database channel is closed");
-            }
-            info!("Database subscribers are ready");
-        } else {
-            info!("No databases configured, skipping verification");
-        }
-
-        info!("All required subscribers are ready");
-        Ok(())
-    }
-
-    fn start_datalog_writer(&mut self) -> Result<()> {
-        if let Some(path) = self.config.datalog_file() {
-            info!("Creating datalog writer with path: {}", path);
-            let writer = DatalogWriter::new(&path, Arc::new(self.channels.clone()))?;
-            self.datalog_writer = Some(Arc::new(writer));
-            info!("Datalog writer initialized successfully");
-        }
         Ok(())
     }
 
@@ -664,16 +622,6 @@ impl Coordinator {
         self.channels.to_mqtt.subscribe().is_closed() || 
         self.channels.to_database.subscribe().is_closed() ||
         self.channels.read_register_cache.subscribe().is_closed()
-    }
-
-    async fn mqtt_receiver(&self) -> Result<()> {
-        let mut receiver = self.channels.from_mqtt.subscribe();
-
-        while let mqtt::ChannelData::Message(message) = receiver.recv().await? {
-            let _ = self.process_message(message).await;
-        }
-
-        Ok(())
     }
 
     async fn process_message(&self, message: mqtt::Message) -> Result<()> {
@@ -946,11 +894,12 @@ impl Coordinator {
     }
 
     fn cache_register(&self, register: u16, values: Vec<u8>) -> Result<()> {
-        // Convert Vec<u8> to Vec<u16>
-        let values_u16: Vec<u16> = values.chunks(2)
+        // Wire format matches `TranslatedData::pairs` / `Utils::u16ify` (little-endian).
+        let values_u16: Vec<u16> = values
+            .chunks(2)
             .map(|chunk| {
                 if chunk.len() == 2 {
-                    ((chunk[0] as u16) << 8) | (chunk[1] as u16)
+                    Utils::u16ify(chunk, 0)
                 } else {
                     chunk[0] as u16
                 }
@@ -966,11 +915,20 @@ impl Coordinator {
     }
 
     async fn send_to_mqtt(&self, data: &TranslatedData) -> Result<()> {
-        if let Some(_mqtt) = &self.mqtt {
-            let messages = mqtt::Message::for_input(data.clone(), true)?;
-            for message in messages {
-                self.channels.to_mqtt.send(mqtt::ChannelData::Message(message))?;
+        if !self.config.mqtt().enabled() {
+            return Ok(());
+        }
+        let messages = match data.device_function {
+            DeviceFunction::ReadHold | DeviceFunction::ReadHoldError => {
+                mqtt::Message::for_hold(data.clone())?
             }
+            _ => mqtt::Message::for_input(
+                data.clone(),
+                self.config.mqtt().publish_individual_input(),
+            )?,
+        };
+        for message in messages {
+            self.channels.to_mqtt.send(mqtt::ChannelData::Message(message))?;
         }
         Ok(())
     }
@@ -980,13 +938,14 @@ impl Coordinator {
     }
 
     async fn update_hold(&self, inverter: config::Inverter, register: Register, bit: RegisterBit, enable: bool) -> Result<()> {
-        let write_inverter = commands::write_inverter::WriteInverter::new(
+        let update_hold = commands::update_hold::UpdateHold::new(
             self.channels.clone(),
             inverter,
-            (*self.config).clone(),
+            register.into(),
+            bit,
+            enable,
         );
-        let value = if enable { 1 } else { 0 };
-        write_inverter.set_hold(register, value).await
+        update_hold.run().await
     }
 
     async fn read_time_register(&self, inverter: &config::Inverter, action: Action) -> Result<()> {
@@ -1000,7 +959,7 @@ impl Coordinator {
         .await
     }
 
-    pub async fn app(shutdown_rx: broadcast::Receiver<()>, config: Arc<ConfigWrapper>) -> Result<()> {
+    pub async fn app(_shutdown_rx: broadcast::Receiver<()>, config: Arc<ConfigWrapper>) -> Result<()> {
         let channels = Channels::new();
         let mut coordinator = Self::new(config, channels);
         coordinator.start().await

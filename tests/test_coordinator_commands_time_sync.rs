@@ -1,11 +1,28 @@
 mod common;
+
 use common::*;
-use lxp_bridge::prelude::*;
-use lxp_bridge::{lxp, mqtt};
-use lxp_bridge::lxp::packet::{DeviceFunction, Packet, TranslatedData};
-use lxp_bridge::lxp::inverter::Serial;
-use lxp_bridge::coordinator::commands::timesync::TimeSync;
-use lxp_bridge::coordinator::ChannelData;
+use eg4_bridge::coordinator;
+use eg4_bridge::eg4;
+use eg4_bridge::eg4::packet::Packet;
+use eg4_bridge::prelude::*;
+
+fn spawn_coordinator_forwarder(channels: &Channels) {
+    let ch = channels.clone();
+    let mut rx = ch.to_coordinator.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(coordinator::ChannelData::SendPacket(packet)) => {
+                    let _ = ch
+                        .to_inverter
+                        .send(eg4::inverter::ChannelData::Packet(packet));
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
+}
 
 #[tokio::test]
 #[cfg_attr(not(feature = "mocks"), ignore)]
@@ -14,63 +31,62 @@ async fn update_time() {
 
     let inverter = Factory::inverter();
     let channels = Channels::new();
+    spawn_coordinator_forwarder(&channels);
 
     let subject =
         coordinator::commands::timesync::TimeSync::new(channels.clone(), inverter.clone());
 
     let sf = async {
         subject.run().await?;
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     };
 
     let tf = async {
-        // wait for packet to request time from inverter and verify it is correct
+        let mut to_inverter = channels.to_inverter.subscribe();
+
         assert_eq!(
-            unwrap_inverter_channeldata_packet(channels.to_inverter.subscribe().recv().await?),
-            Packet::TranslatedData(lxp::packet::TranslatedData {
-                datalog: inverter.datalog(),
-                device_function: lxp::packet::DeviceFunction::ReadHold,
-                inverter: inverter.serial(),
+            unwrap_inverter_channeldata_packet(to_inverter.recv().await?),
+            Packet::TranslatedData(eg4::packet::TranslatedData {
+                datalog: inverter.datalog().unwrap(),
+                device_function: eg4::packet::DeviceFunction::ReadHold,
+                inverter: inverter.serial().unwrap(),
                 register: 12,
                 values: vec![3, 0]
             })
         );
 
-        // send reply with time of 2022-06-18 21:03:10
-        let inverter_time_packet = Packet::TranslatedData(lxp::packet::TranslatedData {
-            datalog: inverter.datalog(),
-            device_function: lxp::packet::DeviceFunction::ReadHold,
-            inverter: inverter.serial(),
+        let inverter_time_packet = Packet::TranslatedData(eg4::packet::TranslatedData {
+            datalog: inverter.datalog().unwrap(),
+            device_function: eg4::packet::DeviceFunction::ReadHold,
+            inverter: inverter.serial().unwrap(),
             register: 12,
             values: vec![22, 6, 18, 21, 03, 10],
         });
         channels
             .from_inverter
-            .send(lxp::inverter::ChannelData::Packet(inverter_time_packet))?;
+            .send(eg4::inverter::ChannelData::Packet(inverter_time_packet))?;
 
-        // wait for packet to set time
         assert_eq!(
-            unwrap_inverter_channeldata_packet(channels.to_inverter.subscribe().recv().await?),
-            Packet::TranslatedData(lxp::packet::TranslatedData {
-                datalog: inverter.datalog(),
-                device_function: lxp::packet::DeviceFunction::WriteMulti,
-                inverter: inverter.serial(),
+            unwrap_inverter_channeldata_packet(to_inverter.recv().await?),
+            Packet::TranslatedData(eg4::packet::TranslatedData {
+                datalog: inverter.datalog().unwrap(),
+                device_function: eg4::packet::DeviceFunction::WriteMulti,
+                inverter: inverter.serial().unwrap(),
                 register: 12,
-                values: vec![22, 3, 4, 5, 6, 7] // hardcoded test time
+                values: vec![22, 3, 4, 5, 6, 7]
             })
         );
 
-        // send reply that we set the time
-        let inverter_ok_packet = Packet::TranslatedData(lxp::packet::TranslatedData {
-            datalog: inverter.datalog(),
-            device_function: lxp::packet::DeviceFunction::WriteMulti,
-            inverter: inverter.serial(),
+        let inverter_ok_packet = Packet::TranslatedData(eg4::packet::TranslatedData {
+            datalog: inverter.datalog().unwrap(),
+            device_function: eg4::packet::DeviceFunction::WriteMulti,
+            inverter: inverter.serial().unwrap(),
             register: 12,
             values: vec![3, 0],
         });
         channels
             .from_inverter
-            .send(lxp::inverter::ChannelData::Packet(inverter_ok_packet))?;
+            .send(eg4::inverter::ChannelData::Packet(inverter_ok_packet))?;
 
         Ok::<(), anyhow::Error>(())
     };
@@ -85,39 +101,38 @@ async fn time_already_correct() {
 
     let inverter = Factory::inverter();
     let channels = Channels::new();
+    spawn_coordinator_forwarder(&channels);
 
     let subject =
         coordinator::commands::timesync::TimeSync::new(channels.clone(), inverter.clone());
 
     let sf = async {
         subject.run().await?;
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     };
 
     let tf = async {
-        // wait for packet to request time from inverter and verify it is correct
         assert_eq!(
             unwrap_inverter_channeldata_packet(channels.to_inverter.subscribe().recv().await?),
-            Packet::TranslatedData(lxp::packet::TranslatedData {
-                datalog: inverter.datalog(),
-                device_function: lxp::packet::DeviceFunction::ReadHold,
-                inverter: inverter.serial(),
+            Packet::TranslatedData(eg4::packet::TranslatedData {
+                datalog: inverter.datalog().unwrap(),
+                device_function: eg4::packet::DeviceFunction::ReadHold,
+                inverter: inverter.serial().unwrap(),
                 register: 12,
                 values: vec![3, 0]
             })
         );
 
-        // send reply with hardcoded test time
-        let inverter_time_packet = Packet::TranslatedData(lxp::packet::TranslatedData {
-            datalog: inverter.datalog(),
-            device_function: lxp::packet::DeviceFunction::ReadHold,
-            inverter: inverter.serial(),
+        let inverter_time_packet = Packet::TranslatedData(eg4::packet::TranslatedData {
+            datalog: inverter.datalog().unwrap(),
+            device_function: eg4::packet::DeviceFunction::ReadHold,
+            inverter: inverter.serial().unwrap(),
             register: 12,
-            values: vec![22, 3, 4, 5, 6, 7], // hardcoded test time
+            values: vec![22, 3, 4, 5, 6, 7],
         });
         channels
             .from_inverter
-            .send(lxp::inverter::ChannelData::Packet(inverter_time_packet))?;
+            .send(eg4::inverter::ChannelData::Packet(inverter_time_packet))?;
 
         Ok::<(), anyhow::Error>(())
     };

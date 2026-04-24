@@ -1,11 +1,29 @@
 mod common;
+
 use common::*;
-use lxp_bridge::prelude::*;
-use lxp_bridge::{lxp, mqtt};
-use lxp_bridge::lxp::packet::{DeviceFunction, Packet, TranslatedData};
-use lxp_bridge::lxp::inverter::Serial;
-use lxp_bridge::coordinator::commands::set_hold::SetHold;
-use lxp_bridge::lxp::inverter::ChannelData;
+use eg4_bridge::coordinator;
+use eg4_bridge::coordinator::commands::set_hold::SetHold;
+use eg4_bridge::eg4;
+use eg4_bridge::eg4::packet::Packet;
+use eg4_bridge::prelude::*;
+
+fn spawn_coordinator_forwarder(channels: &Channels) {
+    let ch = channels.clone();
+    let mut rx = ch.to_coordinator.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(coordinator::ChannelData::SendPacket(packet)) => {
+                    let _ = ch
+                        .to_inverter
+                        .send(eg4::inverter::ChannelData::Packet(packet));
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
+}
 
 #[tokio::test]
 async fn happy_path() {
@@ -13,21 +31,17 @@ async fn happy_path() {
 
     let inverter = Factory::inverter();
     let channels = Channels::new();
+    spawn_coordinator_forwarder(&channels);
 
-    let register = 5 as u16;
-    let value = 10 as u16;
+    let register = 5_u16;
+    let value = 10_u16;
 
-    let subject = coordinator::commands::set_hold::SetHold::new(
-        channels.clone(),
-        inverter.clone(),
-        register,
-        value,
-    );
+    let subject = SetHold::new(channels.clone(), inverter.clone(), register, value);
 
-    let reply = Packet::TranslatedData(lxp::packet::TranslatedData {
-        datalog: inverter.datalog(),
-        device_function: lxp::packet::DeviceFunction::WriteSingle,
-        inverter: inverter.serial(),
+    let reply = Packet::TranslatedData(eg4::packet::TranslatedData {
+        datalog: inverter.datalog().unwrap(),
+        device_function: eg4::packet::DeviceFunction::WriteSingle,
+        inverter: inverter.serial().unwrap(),
         register: 5,
         values: vec![10, 0],
     });
@@ -35,14 +49,14 @@ async fn happy_path() {
     let sf = async {
         let result = subject.run().await;
         assert_eq!(result?, reply.clone());
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     };
 
     let tf = async {
         channels.to_inverter.subscribe().recv().await?;
         channels
             .from_inverter
-            .send(lxp::inverter::ChannelData::Packet(reply.clone()))?;
+            .send(eg4::inverter::ChannelData::Packet(reply.clone()))?;
         Ok::<(), anyhow::Error>(())
     };
 
@@ -55,23 +69,19 @@ async fn bad_reply() {
 
     let inverter = Factory::inverter();
     let channels = Channels::new();
+    spawn_coordinator_forwarder(&channels);
 
-    let register = 5 as u16;
-    let value = 10 as u16;
+    let register = 5_u16;
+    let value = 10_u16;
 
-    let subject = coordinator::commands::set_hold::SetHold::new(
-        channels.clone(),
-        inverter.clone(),
-        register,
-        value,
-    );
+    let subject = SetHold::new(channels.clone(), inverter.clone(), register, value);
 
-    let reply = Packet::TranslatedData(lxp::packet::TranslatedData {
-        datalog: inverter.datalog(),
-        device_function: lxp::packet::DeviceFunction::WriteSingle,
-        inverter: inverter.serial(),
+    let reply = Packet::TranslatedData(eg4::packet::TranslatedData {
+        datalog: inverter.datalog().unwrap(),
+        device_function: eg4::packet::DeviceFunction::WriteSingle,
+        inverter: inverter.serial().unwrap(),
         register: 5,
-        values: vec![200, 0], // reply has wrong value
+        values: vec![200, 0],
     });
 
     let sf = async {
@@ -87,7 +97,7 @@ async fn bad_reply() {
         channels.to_inverter.subscribe().recv().await?;
         channels
             .from_inverter
-            .send(lxp::inverter::ChannelData::Packet(reply.clone()))?;
+            .send(eg4::inverter::ChannelData::Packet(reply.clone()))?;
         Ok::<(), anyhow::Error>(())
     };
 
@@ -100,24 +110,24 @@ async fn no_reply() {
 
     let inverter = Factory::inverter();
     let channels = Channels::new();
+    spawn_coordinator_forwarder(&channels);
 
-    let register = 5 as u16;
-    let value = 10 as u16;
+    let register = 5_u16;
+    let value = 10_u16;
 
-    let subject = coordinator::commands::set_hold::SetHold::new(
-        channels.clone(),
-        inverter.clone(),
-        register,
-        value,
-    );
+    let subject = SetHold::new(channels.clone(), inverter.clone(), register, value);
 
     let sf = async {
         let result = subject.run().await;
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "wait_for_reply TranslatedData(TranslatedData { datalog: 2222222222, device_function: WriteSingle, inverter: 5555555555, register: 5, values: [10, 0] }) - timeout"
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Timeout waiting for reply to TranslatedData")
+                && err.contains("WriteSingle")
+                && err.contains("register: 5"),
+            "{}",
+            err
         );
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     };
 
     let tf = async {
@@ -135,21 +145,18 @@ async fn inverter_not_receiving() {
     let inverter = Factory::inverter();
     let channels = Channels::new();
 
-    let register = 5 as u16;
-    let value = 10 as u16;
+    let register = 5_u16;
+    let value = 10_u16;
 
-    let subject = coordinator::commands::set_hold::SetHold::new(
-        channels.clone(),
-        inverter.clone(),
-        register,
-        value,
-    );
+    let subject = SetHold::new(channels.clone(), inverter.clone(), register, value);
 
     let sf = async {
         let result = subject.run().await;
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "send(to_inverter) failed - channel closed?"
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.starts_with("Failed to send packet to coordinator:"),
+            "{}",
+            err
         );
         Ok::<(), anyhow::Error>(())
     };

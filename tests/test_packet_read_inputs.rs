@@ -1,16 +1,7 @@
 mod common;
-use common::*;
-use eg4_bridge::prelude::*;
-use eg4_bridge::eg4;
-use eg4_bridge::eg4::packet::ReadInputs as PacketReadInputs;
-use eg4_bridge::eg4::inverter::Serial;
-use std::str::FromStr;
-use eg4_bridge::eg4::packet::DeviceFunction;
-use eg4_bridge::eg4::packet::Packet;
-use eg4_bridge::eg4::packet::TranslatedData;
-use eg4_bridge::eg4::inverter::ChannelData;
-use eg4_bridge::coordinator::commands::read_inputs::ReadInputs;
-use eg4_bridge::prelude::Channels;
+
+use common::Factory;
+use eg4_bridge::eg4::packet::ReadInputs;
 
 #[test]
 fn read_inputs_default() {
@@ -28,15 +19,38 @@ fn read_inputs_set() {
 #[tokio::test]
 #[cfg_attr(not(feature = "mocks"), ignore)]
 async fn handles_missing_read_input() {
+    let r1 = Factory::read_input_1();
+    let r2 = Factory::read_input_2();
+    let r3 = Factory::read_input_3();
+    let r4 = Factory::read_input_4();
+    let r5 = Factory::read_input_5();
+    let r6 = Factory::read_input_6();
+
     let mut read_inputs = ReadInputs::default();
-    read_inputs.set_read_input_1(Factory::read_input_1());
+    read_inputs.set_read_input_1(r1.clone());
     assert_eq!(read_inputs.to_input_all(), None);
 
-    read_inputs.set_read_input_2(Factory::read_input_2());
+    read_inputs.set_read_input_2(r2.clone());
     assert_eq!(read_inputs.to_input_all(), None);
 
-    read_inputs.set_read_input_3(Factory::read_input_3());
-    assert_eq!(read_inputs.to_input_all(), Some(Factory::read_input_all()));
+    read_inputs.set_read_input_3(r3.clone());
+    assert_eq!(read_inputs.to_input_all(), None);
+
+    read_inputs.set_read_input_4(r4.clone());
+    read_inputs.set_read_input_5(r5.clone());
+    read_inputs.set_read_input_6(r6.clone());
+
+    let expected = {
+        let mut ri = ReadInputs::default();
+        ri.set_read_input_1(r1);
+        ri.set_read_input_2(r2);
+        ri.set_read_input_3(r3);
+        ri.set_read_input_4(r4);
+        ri.set_read_input_5(r5);
+        ri.set_read_input_6(r6);
+        ri.to_input_all()
+    };
+    assert_eq!(read_inputs.to_input_all(), expected);
 
     let mut read_inputs = ReadInputs::default();
     read_inputs.set_read_input_3(Factory::read_input_3());

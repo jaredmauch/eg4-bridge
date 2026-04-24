@@ -1,11 +1,9 @@
 mod common;
 use common::*;
-use lxp_bridge::prelude::*;
-use lxp_bridge::{lxp, config};
-use lxp_bridge::lxp::packet::Packet;
-use lxp_bridge::lxp::inverter::Serial;
-use lxp_bridge::lxp::packet::{DeviceFunction, TranslatedData};
-use lxp_bridge::lxp::inverter::ChannelData;
+use eg4_bridge::prelude::*;
+use eg4_bridge::{eg4, config};
+use eg4_bridge::eg4::packet::Packet;
+use eg4_bridge::eg4::inverter::Serial;
 
 // these tests are shonky, I need to work on how to test the inverter code reliably
 
@@ -23,14 +21,19 @@ async fn serials_fixed_in_outgoing_packets() {
         enabled: true,
         host: "localhost".to_owned(),
         port: 1235,
-        datalog: Serial::from_str("0000000000").unwrap(),
-        serial: Serial::from_str("0000000000").unwrap(),
+        datalog: Some(Serial::from_str("0000000000").unwrap()),
+        serial: Some(Serial::from_str("0000000000").unwrap()),
         heartbeats: None,
         publish_holdings_on_connect: None,
         read_timeout: None,
+        use_tcp_nodelay: None,
+        register_block_size: None,
+        delay_ms: None,
+        read_only: None,
+        register_read_interval: None,
     };
     let channels = Channels::new();
-    let inverter = lxp::inverter::Inverter::new(config, &inverter, channels.clone());
+    let inverter = eg4::inverter::Inverter::new(config, &inverter, channels.clone());
 
     let mut from_inverter = channels.from_inverter.subscribe();
 
@@ -57,9 +60,9 @@ async fn serials_fixed_in_outgoing_packets() {
 
         assert_eq!(
             unwrap_inverter_channeldata_packet(from_inverter.recv().await.unwrap()),
-            Packet::TranslatedData(lxp::packet::TranslatedData {
+            Packet::TranslatedData(eg4::packet::TranslatedData {
                 datalog: Serial::from_str("XXXXXXXXXX").unwrap(),
-                device_function: lxp::packet::DeviceFunction::ReadInput,
+                device_function: eg4::packet::DeviceFunction::ReadInput,
                 inverter: Serial::from_str("XXXXXXXXXX").unwrap(),
                 register: 0,
                 values: vec![
@@ -71,16 +74,16 @@ async fn serials_fixed_in_outgoing_packets() {
             })
         );
 
-        let packet = Packet::TranslatedData(lxp::packet::TranslatedData {
+        let packet = Packet::TranslatedData(eg4::packet::TranslatedData {
             datalog: Serial::from_str("0000000000").unwrap(),
-            device_function: lxp::packet::DeviceFunction::ReadInput,
+            device_function: eg4::packet::DeviceFunction::ReadInput,
             inverter: Serial::from_str("0000000000").unwrap(),
             register: 12,
             values: vec![1, 0],
         });
         channels
             .to_inverter
-            .send(lxp::inverter::ChannelData::Packet(packet))
+            .send(eg4::inverter::ChannelData::Packet(packet))
             .unwrap();
 
         // wait for inverter to receive the ReadHold and verify the serials have been replaced
@@ -95,7 +98,7 @@ async fn serials_fixed_in_outgoing_packets() {
             ]
         );
 
-        inverter.stop();
+        inverter.stop().await;
 
         Ok::<(), anyhow::Error>(())
     };
@@ -113,14 +116,19 @@ async fn test_replies_to_heartbeats() {
         enabled: true,
         host: "localhost".to_owned(),
         port: 1235,
-        datalog: Serial::from_str("XXXXXXXXXX").unwrap(),
-        serial: Serial::from_str("0000000000").unwrap(),
+        datalog: Some(Serial::from_str("XXXXXXXXXX").unwrap()),
+        serial: Some(Serial::from_str("0000000000").unwrap()),
         heartbeats: Some(true),
         publish_holdings_on_connect: None,
         read_timeout: None,
+        use_tcp_nodelay: None,
+        register_block_size: None,
+        delay_ms: None,
+        read_only: None,
+        register_read_interval: None,
     };
     let channels = Channels::new();
-    let inverter = lxp::inverter::Inverter::new(config, &inverter, channels.clone());
+    let inverter = eg4::inverter::Inverter::new(config, &inverter, channels.clone());
 
     let _from_inverter = channels.from_inverter.subscribe();
 
@@ -149,7 +157,7 @@ async fn test_replies_to_heartbeats() {
         );
 
         debug!("stop");
-        inverter.stop();
+        inverter.stop().await;
 
         Ok::<(), anyhow::Error>(())
     };

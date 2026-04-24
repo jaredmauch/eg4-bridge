@@ -1,20 +1,38 @@
+//! Integration test for `Database` insert path. Requires PostgreSQL (same as production).
+//!
+//! Without a URL, the test exits successfully so `cargo test` stays usable offline.
+//! To run against a local or CI database:
+//!
+//! ```text
+//! EG4_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/eg4_test cargo test --test test_database postgres_read_input_all_insertion
+//! ```
+
 mod common;
 use common::*;
 
-use {futures::TryStreamExt, sqlx::Row};
-use lxp_bridge::prelude::*;
-use lxp_bridge::{config, database};
-use lxp_bridge::database::ChannelData;
+use futures::TryStreamExt;
+use eg4_bridge::coordinator::PacketStats;
+use eg4_bridge::prelude::*;
+use eg4_bridge::{config, database};
+use sqlx::Row;
+use std::sync::{Arc, Mutex};
 
-// avoids having to specify return types for row.get()
+fn postgres_test_url() -> Option<String> {
+    std::env::var("EG4_TEST_DATABASE_URL")
+        .ok()
+        .filter(|u| u.starts_with("postgres"))
+        .or_else(|| {
+            std::env::var("DATABASE_URL")
+                .ok()
+                .filter(|u| u.starts_with("postgres"))
+        })
+}
+
 fn assert_str_eq(input: &str, expected: &str) {
     assert_eq!(input, expected);
 }
 fn assert_u16_eq(input: i32, expected: u16) {
     assert_eq!(input as u16, expected);
-}
-fn assert_i16_eq(input: i32, expected: i16) {
-    assert_eq!(input as i16, expected);
 }
 fn assert_i32_eq(input: i32, expected: i32) {
     assert_eq!(input, expected);
@@ -24,25 +42,32 @@ fn assert_f64_eq(input: f64, expected: f64) {
 }
 
 #[tokio::test]
-async fn sqlite_insertion() {
+async fn postgres_read_input_all_insertion() {
+    let Some(url) = postgres_test_url() else {
+        eprintln!(
+            "skip postgres_read_input_all_insertion: set EG4_TEST_DATABASE_URL or DATABASE_URL (postgres://...)"
+        );
+        return;
+    };
+
     common_setup();
 
     let config = config::Database {
         enabled: true,
-        url: "sqlite::memory:".to_string(),
+        url,
     };
     let channels = Channels::new();
-
-    let database = Database::new(config, channels.clone());
+    let shared_stats = Arc::new(Mutex::new(PacketStats::default()));
+    let database = Database::new(config, channels.clone(), shared_stats);
 
     let tf = async {
-        let channel_data = database::ChannelData::ReadInputAll(Box::new(Factory::read_input_all()));
+        let channel_data =
+            database::ChannelData::ReadInputAll(Box::new(Factory::read_input_all()));
 
         let mut retries = 0;
-        // wait up to 5 seconds for database to be ready and accepting messages
         while channels.to_database.send(channel_data.clone()).is_err() {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            retries = retries + 1;
+            retries += 1;
             if retries > 50 {
                 panic!("database not ready for messages");
             }
@@ -50,14 +75,13 @@ async fn sqlite_insertion() {
 
         database.stop();
 
-        let mut conn = database.connection().await?;
+        let pool = database.connection().await?;
 
         let mut retries = 0;
         loop {
-            let mut rows = sqlx::query("SELECT * FROM inputs").fetch(&mut conn);
+            let mut rows = sqlx::query("SELECT * FROM inputs").fetch(&pool);
             if let Some(row) = rows.try_next().await? {
                 let ria = Factory::read_input_all();
-                // really this should test a whole lot more columns, but tedious
                 assert_u16_eq(row.get("status"), ria.status);
                 assert_i32_eq(row.get("p_grid"), ria.p_grid);
                 assert_i32_eq(row.get("p_battery"), ria.p_battery);
@@ -75,7 +99,7 @@ async fn sqlite_insertion() {
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            retries = retries + 1;
+            retries += 1;
 
             if retries > 50 {
                 panic!("row not inserted");

@@ -1,7 +1,7 @@
-use lxp_bridge::prelude::*;
-use lxp_bridge::{lxp, mqtt};
-use lxp_bridge::lxp::packet::DeviceFunction;
-use lxp_bridge::lxp::inverter::Serial;
+//! Pure unit tests for [`eg4_bridge::mqtt::Message`] topic/payload builders (`for_hold`, `for_input`,
+//! etc.). **No MQTT broker or daemon** is involved; there is no network I/O.
+
+use eg4_bridge::{eg4, mqtt};
 
 mod common;
 use common::*;
@@ -12,8 +12,8 @@ async fn for_param() {
 
     let inverter = Factory::inverter();
 
-    let packet = lxp::packet::ReadParam {
-        datalog: inverter.datalog(),
+    let packet = eg4::packet::ReadParam {
+        datalog: inverter.datalog().unwrap(),
         register: 0,
         values: vec![1, 0],
     };
@@ -34,10 +34,10 @@ async fn for_hold_single() {
 
     let inverter = Factory::inverter();
 
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog(),
-        device_function: lxp::packet::DeviceFunction::ReadHold,
-        inverter: inverter.serial(),
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog().unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadHold,
+        inverter: inverter.serial().unwrap(),
         register: 0,
         values: vec![1, 0],
     };
@@ -58,10 +58,10 @@ async fn for_hold_21() {
 
     let inverter = Factory::inverter();
 
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog(),
-        device_function: lxp::packet::DeviceFunction::ReadHold,
-        inverter: inverter.serial(),
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog().unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadHold,
+        inverter: inverter.serial().unwrap(),
         register: 21,
         values: vec![12, 34],
     };
@@ -74,10 +74,10 @@ async fn for_hold_21() {
     );
 
     // really should do every bit but thats very tedious.. lets just do this one for now
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog(),
-        device_function: lxp::packet::DeviceFunction::ReadHold,
-        inverter: inverter.serial(),
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog().unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadHold,
+        inverter: inverter.serial().unwrap(),
         register: 21,
         values: vec![0, 8],
     };
@@ -96,10 +96,10 @@ async fn for_hold_110() {
 
     let inverter = Factory::inverter();
 
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog(),
-        device_function: lxp::packet::DeviceFunction::ReadHold,
-        inverter: inverter.serial(),
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog().unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadHold,
+        inverter: inverter.serial().unwrap(),
         register: 110,
         values: vec![9, 4],
     };
@@ -118,10 +118,10 @@ async fn for_hold_multi() {
 
     let inverter = Factory::inverter();
 
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog,
-        device_function: lxp::packet::DeviceFunction::ReadHold,
-        inverter: inverter.serial,
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog.unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadHold,
+        inverter: inverter.serial.unwrap(),
         register: 12,
         values: vec![22, 6, 7, 8, 9, 0],
     };
@@ -155,10 +155,10 @@ async fn for_input() {
 
     let inverter = Factory::inverter();
 
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog,
-        device_function: lxp::packet::DeviceFunction::ReadInput,
-        inverter: inverter.serial,
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog.unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadInput,
+        inverter: inverter.serial.unwrap(),
         register: 0,
         values: [0; 80].to_vec(),
     };
@@ -172,10 +172,10 @@ async fn for_input() {
         }]
     );
 
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog,
-        device_function: lxp::packet::DeviceFunction::ReadInput,
-        inverter: inverter.serial,
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog.unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadInput,
+        inverter: inverter.serial.unwrap(),
         register: 0,
         values: [0; 4].to_vec(),
     };
@@ -202,10 +202,10 @@ async fn for_input() {
     );
 
     // test u16 handling on a ReadInputs2 structure
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog,
-        device_function: lxp::packet::DeviceFunction::ReadInput,
-        inverter: inverter.serial,
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog.unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadInput,
+        inverter: inverter.serial.unwrap(),
         register: 80,
         values: [255; 80].to_vec(),
     };
@@ -227,10 +227,10 @@ async fn for_input_warning_codes() {
 
     let inverter = Factory::inverter();
 
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog,
-        device_function: lxp::packet::DeviceFunction::ReadInput,
-        inverter: inverter.serial,
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog.unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadInput,
+        inverter: inverter.serial.unwrap(),
         register: 62,
         values: [0, 0, 0, 0].to_vec(),
     };
@@ -256,10 +256,10 @@ async fn for_input_warning_codes() {
         ]
     );
 
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog,
-        device_function: lxp::packet::DeviceFunction::ReadInput,
-        inverter: inverter.serial,
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog.unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadInput,
+        inverter: inverter.serial.unwrap(),
         register: 62,
         values: [0, 0, 0, 128].to_vec(),
     };
@@ -293,10 +293,10 @@ async fn for_input_fault_codes() {
 
     let inverter = Factory::inverter();
 
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog,
-        device_function: lxp::packet::DeviceFunction::ReadInput,
-        inverter: inverter.serial,
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog.unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadInput,
+        inverter: inverter.serial.unwrap(),
         register: 60,
         values: [0, 0, 0, 0].to_vec(),
     };
@@ -322,10 +322,10 @@ async fn for_input_fault_codes() {
         ]
     );
 
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog,
-        device_function: lxp::packet::DeviceFunction::ReadInput,
-        inverter: inverter.serial,
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog.unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadInput,
+        inverter: inverter.serial.unwrap(),
         register: 60,
         values: [1, 0, 0, 0].to_vec(),
     };
@@ -358,10 +358,10 @@ async fn for_input_ignore_127_254() {
 
     let inverter = Factory::inverter();
 
-    let packet = lxp::packet::TranslatedData {
-        datalog: inverter.datalog(),
-        device_function: lxp::packet::DeviceFunction::ReadInput,
-        inverter: inverter.serial(),
+    let packet = eg4::packet::TranslatedData {
+        datalog: inverter.datalog().unwrap(),
+        device_function: eg4::packet::DeviceFunction::ReadInput,
+        inverter: inverter.serial().unwrap(),
         register: 127,
         values: [0; 254].to_vec(),
     };

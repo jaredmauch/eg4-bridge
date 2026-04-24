@@ -1,15 +1,14 @@
 mod common;
 use common::*;
-use lxp_bridge::prelude::*;
-use lxp_bridge::mqtt;
-use lxp_bridge::config;
-use lxp_bridge::lxp;
+use eg4_bridge::mqtt;
+use eg4_bridge::config;
+use eg4_bridge::eg4;
 use std::str::FromStr;
 use serde_json::json;
-use lxp_bridge::config::Config;
+use eg4_bridge::config::Config;
 
-pub fn example_serial() -> lxp::inverter::Serial {
-    lxp::inverter::Serial::from_str("TESTSERIAL").unwrap()
+pub fn example_serial() -> eg4::inverter::Serial {
+    eg4::inverter::Serial::from_str("TESTSERIAL").unwrap()
 }
 
 #[test]
@@ -87,23 +86,33 @@ fn enabled_inverters() {
     config.set_inverters(vec![
         config::Inverter {
             enabled: false,
-            datalog: example_serial(),
+            datalog: Some(example_serial()),
             host: "localhost".to_owned(),
             port: 8000,
-            serial: example_serial(),
+            serial: Some(example_serial()),
             heartbeats: None,
             publish_holdings_on_connect: None,
             read_timeout: None,
+            use_tcp_nodelay: None,
+            register_block_size: None,
+            delay_ms: None,
+            read_only: None,
+            register_read_interval: None,
         },
         config::Inverter {
             enabled: true,
-            datalog: example_serial(),
+            datalog: Some(example_serial()),
             host: "localhost".to_owned(),
             port: 8000,
-            serial: example_serial(),
+            serial: Some(example_serial()),
             heartbeats: None,
             publish_holdings_on_connect: None,
             read_timeout: None,
+            use_tcp_nodelay: None,
+            register_block_size: None,
+            delay_ms: None,
+            read_only: None,
+            register_read_interval: None,
         },
     ]);
 
@@ -117,23 +126,33 @@ fn inverters_for_message() {
     config.set_inverters(vec![
         config::Inverter {
             enabled: true,
-            datalog: example_serial(),
+            datalog: Some(example_serial()),
             host: "localhost".to_owned(),
             port: 8000,
-            serial: example_serial(),
+            serial: Some(example_serial()),
             heartbeats: None,
             publish_holdings_on_connect: None,
             read_timeout: None,
+            use_tcp_nodelay: None,
+            register_block_size: None,
+            delay_ms: None,
+            read_only: None,
+            register_read_interval: None,
         },
         config::Inverter {
             enabled: false,
-            datalog: example_serial(),
+            datalog: Some(example_serial()),
             host: "localhost".to_owned(),
             port: 8000,
-            serial: example_serial(),
+            serial: Some(example_serial()),
             heartbeats: None,
             publish_holdings_on_connect: None,
             read_timeout: None,
+            use_tcp_nodelay: None,
+            register_block_size: None,
+            delay_ms: None,
+            read_only: None,
+            register_read_interval: None,
         },
     ]);
 

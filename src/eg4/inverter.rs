@@ -228,7 +228,6 @@ pub struct Inverter {
 const READ_TIMEOUT_SECS: u64 = 1; // Multiplier for read_timeout from config
 const WRITE_TIMEOUT_SECS: u64 = 5; // Timeout for write operations
 const RECONNECT_DELAY_SECS: u64 = 5; // Delay before reconnection attempts
-const TCP_KEEPALIVE_SECS: u64 = 60; // TCP keepalive interval
 
 impl Inverter {
     pub fn new(config: ConfigWrapper, inverter: &config::Inverter, channels: Channels) -> Self {
@@ -676,7 +675,7 @@ impl Inverter {
                             let mut updates = Vec::new();
 
                             // Check datalog serial
-                            if let Err(e) = self.compare_datalog(&packet) {
+                            if let Err(_e) = self.compare_datalog(&packet) {
                                 if let Some(new_datalog) = self.extract_datalog_serial(&packet) {
                                     updates.push(("datalog", new_datalog));
                                 }
@@ -684,7 +683,7 @@ impl Inverter {
 
                             // Check inverter serial for TranslatedData packets
                             if let Packet::TranslatedData(_) = packet {
-                                if let Err(e) = self.compare_inverter(&packet) {
+                                if let Err(_e) = self.compare_inverter(&packet) {
                                     if let Some(new_serial) = self.extract_inverter_serial(&packet) {
                                         updates.push(("serial", new_serial));
                                     }
@@ -749,30 +748,20 @@ impl Inverter {
                     inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default());
                 Ok(())
             }
-            Err(e) => {
+            Err(_) => {
                 let packet_info = match &packet {
                     Packet::TranslatedData(td) => format!("TranslatedData(register={:?}, datalog={})", td.register, td.datalog),
                     Packet::ReadParam(rp) => format!("ReadParam(register={:?}, datalog={})", rp.register, rp.datalog),
                     Packet::WriteParam(wp) => format!("WriteParam(register={:?}, datalog={})", wp.register, wp.datalog),
                     Packet::Heartbeat(hb) => format!("Heartbeat(datalog={})", hb.datalog),
                 };
-                
-                // Log the specific error
-                match e {
-                    broadcast::error::SendError(_) => {
-                        error!("Failed to forward packet from inverter {} ({}) - channel is closed", 
-                            inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default(),
-                            packet_info
-                        );
-                    }
-                    _ => {
-                        error!("Failed to forward packet from inverter {} ({}) - unexpected error: {}", 
-                            inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default(),
-                            packet_info,
-                            e
-                        );
-                    }
-                }
+
+                // send() only fails with SendError when there are no receivers.
+                error!(
+                    "Failed to forward packet from inverter {} ({}) - channel is closed",
+                    inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default(),
+                    packet_info
+                );
                 Ok(())
             }
         }
