@@ -1,10 +1,29 @@
 mod common;
+
 use common::*;
-use lxp_bridge::prelude::*;
-use lxp_bridge::{lxp, mqtt};
-use lxp_bridge::lxp::packet::{DeviceFunction, Packet, ReadParam};
-use lxp_bridge::coordinator::commands::read_param::ReadParam as CoordReadParam;
-use lxp_bridge::lxp::inverter::ChannelData;
+use eg4_bridge::coordinator;
+use eg4_bridge::coordinator::commands::read_param::ReadParam as CoordReadParam;
+use eg4_bridge::eg4;
+use eg4_bridge::eg4::packet::Packet;
+use eg4_bridge::prelude::*;
+
+fn spawn_coordinator_forwarder(channels: &Channels) {
+    let ch = channels.clone();
+    let mut rx = ch.to_coordinator.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(coordinator::ChannelData::SendPacket(packet)) => {
+                    let _ = ch
+                        .to_inverter
+                        .send(eg4::inverter::ChannelData::Packet(packet));
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
+}
 
 #[tokio::test]
 async fn happy_path() {
@@ -12,17 +31,14 @@ async fn happy_path() {
 
     let inverter = Factory::inverter();
     let channels = Channels::new();
+    spawn_coordinator_forwarder(&channels);
 
-    let register = 0 as u16;
+    let register = 0_u16;
 
-    let subject = coordinator::commands::read_param::ReadParam::new(
-        channels.clone(),
-        inverter.clone(),
-        register,
-    );
+    let subject = CoordReadParam::new(channels.clone(), inverter.clone(), register);
 
-    let reply = Packet::ReadParam(lxp::packet::ReadParam {
-        datalog: inverter.datalog,
+    let reply = Packet::ReadParam(eg4::packet::ReadParam {
+        datalog: inverter.datalog.unwrap(),
         register: 0,
         values: vec![0, 0],
     });
@@ -37,7 +53,7 @@ async fn happy_path() {
         channels.to_inverter.subscribe().recv().await?;
         channels
             .from_inverter
-            .send(lxp::inverter::ChannelData::Packet(reply.clone()))?;
+            .send(eg4::inverter::ChannelData::Packet(reply.clone()))?;
         Ok::<(), anyhow::Error>(())
     };
 
@@ -50,20 +66,19 @@ async fn no_reply() {
 
     let inverter = Factory::inverter();
     let channels = Channels::new();
+    spawn_coordinator_forwarder(&channels);
 
-    let register = 0 as u16;
+    let register = 0_u16;
 
-    let subject = coordinator::commands::read_param::ReadParam::new(
-        channels.clone(),
-        inverter.clone(),
-        register,
-    );
+    let subject = CoordReadParam::new(channels.clone(), inverter.clone(), register);
 
     let sf = async {
         let result = subject.run().await;
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "wait_for_reply ReadParam(ReadParam { datalog: 2222222222, register: 0, values: [] }) - timeout"
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Timeout waiting for reply to ReadParam"),
+            "{}",
+            err
         );
         Ok::<(), anyhow::Error>(())
     };
@@ -83,19 +98,17 @@ async fn inverter_not_receiving() {
     let inverter = Factory::inverter();
     let channels = Channels::new();
 
-    let register = 0 as u16;
+    let register = 0_u16;
 
-    let subject = coordinator::commands::read_param::ReadParam::new(
-        channels.clone(),
-        inverter.clone(),
-        register,
-    );
+    let subject = CoordReadParam::new(channels.clone(), inverter.clone(), register);
 
     let sf = async {
         let result = subject.run().await;
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "send(to_inverter) failed - channel closed?"
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.starts_with("Failed to send packet to coordinator:"),
+            "{}",
+            err
         );
         Ok::<(), anyhow::Error>(())
     };

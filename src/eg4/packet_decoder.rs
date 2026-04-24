@@ -1,3 +1,9 @@
+//! Tokio [`Decoder`] for one LXP TCP frame at a time (length prefix, optional MODBUS CRC for
+//! tcp_function 194, then [`Parser::parse`]).
+//!
+//! Golden on-wire bytes and integration tests live under `tests/test_packet_tcp_frames/` in this
+//! repository.
+
 use crate::prelude::*;
 use crate::eg4::packet::Parser;
 

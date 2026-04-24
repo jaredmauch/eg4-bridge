@@ -17,6 +17,7 @@ pub const BLOCK_SIZE: u16 = 40;
 ///
 /// # Examples
 /// ```
+/// # use eg4_bridge::coordinator::commands::validation::validate_register_block_boundary;
 /// // Valid: Reading 5 registers starting at 35 (all within block 0)
 /// validate_register_block_boundary(35, 5).unwrap();
 ///
