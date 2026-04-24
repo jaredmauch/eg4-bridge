@@ -182,7 +182,7 @@ async fn forwards_read_input_all_to_mqtt_and_influx() {
         let d = unwrap_influx_channeldata_input_data(to_influx.recv().await?);
         assert_eq!(d["register"], 0);
         assert_eq!(d["device_function"], "ReadInput");
-        assert_eq!(d["v_pv_1"], 25.7);
+        assert_eq!(d["raw_data"]["0"], "0001");
 
         coord_stop.stop();
 
