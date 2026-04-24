@@ -56,8 +56,12 @@ databases: []
     )
     .unwrap();
 
-    let config = Config::new(temp.path().to_string_lossy().to_string());
-    assert!(config.is_err());
+    let err = Config::new(temp.path().to_string_lossy().to_string()).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("register_block_size") || err_msg.contains("must be 40"),
+        "expected register_block_size validation error, got: {err_msg}"
+    );
 }
 
 #[test]
