@@ -589,7 +589,7 @@ impl Config {
                 if let Some(register_block_size) = inv.register_block_size {
                     if register_block_size != 40 {
                         bail!(
-                            "inverter[{}].register_block_size={} is invalid; must be 40 (current parser supports blocks starting at 0,40,80,120,160,200)",
+                            "inverter[{}].register_block_size={} is invalid; the current implementation only supports a register_block_size of 40",
                             i,
                             register_block_size
                         );
