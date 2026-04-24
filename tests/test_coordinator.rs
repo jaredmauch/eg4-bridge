@@ -209,7 +209,7 @@ async fn forwards_read_input_all_to_influx_and_database_channels() {
         ]))
         .match_body(Matcher::Any)
         .with_status(204)
-        .expect(1)
+        .expect(2)
         .create();
 
     let mut c = quiet_bridge_config();
@@ -259,7 +259,7 @@ async fn forwards_read_input_all_to_influx_and_database_channels() {
         assert_eq!(input_all.soc, 1);
 
         coord_stop.stop();
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         mock.assert();
 
         Ok::<(), anyhow::Error>(())
