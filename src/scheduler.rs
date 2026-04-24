@@ -13,7 +13,17 @@ impl Scheduler {
     }
 
     async fn read_input_registers(&self, inverter: &config::Inverter) -> Result<()> {
-        let block_size = inverter.register_block_size();
+        let configured_block_size = inverter.register_block_size();
+        let block_size = if configured_block_size == 40 {
+            40
+        } else {
+            error!(
+                "Invalid register_block_size={} for inverter {}; falling back to 40",
+                configured_block_size,
+                inverter.serial().unwrap_or_default()
+            );
+            40
+        };
         
         // Read all input register blocks
         for start_register in (0..=200).step_by(block_size as usize) {
