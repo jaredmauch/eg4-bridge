@@ -6,7 +6,7 @@ use crate::command::Command;
 use crate::datalog_writer::DatalogWriter;
 
 use crate::eg4::{
-    packet::{DeviceFunction, TranslatedData, Packet},
+    packet::{DeviceFunction, ReadInput, TranslatedData, Packet},
 };
 
 use commands::time_register_ops::{Action, ReadTimeRegister};
@@ -571,6 +571,18 @@ impl Coordinator {
         // Process the packet
         match packet {
             Packet::TranslatedData(td) => {
+                let parsed_input = if td.device_function == DeviceFunction::ReadInput {
+                    match td.read_input() {
+                        Ok(parsed) => Some(parsed),
+                        Err(err) => {
+                            debug!("Skipping decoded fan-out for undecodable input payload: {}", err);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 // Skip heartbeat packets for InfluxDB
                 if !matches!(td.device_function, DeviceFunction::WriteSingle | DeviceFunction::WriteMulti) {
                     // Send to InfluxDB
@@ -580,7 +592,7 @@ impl Coordinator {
                 }
 
                 // Send to databases (e.g. PostgreSQL) when input blocks can be decoded.
-                if let Err(e) = self.send_to_database(&td) {
+                if let Err(e) = self.send_to_database(&td, parsed_input.as_ref()) {
                     error!("Failed to send data to database channel: {}", e);
                 }
 
@@ -590,7 +602,7 @@ impl Coordinator {
                 }
 
                 // Send to MQTT
-                if let Err(e) = self.send_to_mqtt(&td).await {
+                if let Err(e) = self.send_to_mqtt(&td, parsed_input.as_ref()).await {
                     error!("Failed to send data to MQTT: {}", e);
                 }
             }
@@ -921,7 +933,7 @@ impl Coordinator {
         Ok(())
     }
 
-    async fn send_to_mqtt(&self, data: &TranslatedData) -> Result<()> {
+    async fn send_to_mqtt(&self, data: &TranslatedData, parsed_input: Option<&ReadInput>) -> Result<()> {
         if !self.config.mqtt().enabled() {
             return Ok(());
         }
@@ -929,9 +941,10 @@ impl Coordinator {
             DeviceFunction::ReadHold | DeviceFunction::ReadHoldError => {
                 mqtt::Message::for_hold(data.clone())?
             }
-            _ => mqtt::Message::for_input(
+            _ => mqtt::Message::for_input_with_parsed(
                 data.clone(),
                 self.config.mqtt().publish_individual_input(),
+                parsed_input.cloned(),
             )?,
         };
         for message in messages {
@@ -940,9 +953,7 @@ impl Coordinator {
         Ok(())
     }
 
-    fn send_to_database(&self, data: &TranslatedData) -> Result<()> {
-        use crate::eg4::packet::ReadInput;
-
+    fn send_to_database(&self, data: &TranslatedData, parsed_input: Option<&ReadInput>) -> Result<()> {
         if self.databases.is_empty() {
             debug!("No databases configured, skipping send");
             return Ok(());
@@ -952,15 +963,11 @@ impl Coordinator {
             return Ok(());
         }
 
-        let parsed = match data.read_input() {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                debug!("Skipping database write for undecodable input payload: {}", err);
-                return Ok(());
-            }
+        let Some(parsed) = parsed_input else {
+            return Ok(());
         };
 
-        let maybe_input_all = match parsed {
+        let maybe_input_all = match parsed.clone() {
             ReadInput::ReadInputAll(input_all) => Some(*input_all),
             ReadInput::ReadInput1(r1) => {
                 let mut store = self

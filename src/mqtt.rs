@@ -76,9 +76,10 @@ impl Message {
         })
     }
 
-    pub fn for_input(
+    pub fn for_input_with_parsed(
         td: crate::eg4::packet::TranslatedData,
         publish_individual: bool,
+        parsed_input: Option<crate::eg4::packet::ReadInput>,
     ) -> Result<Vec<Message>> {
         use crate::eg4::packet::ReadInput;
 
@@ -141,18 +142,18 @@ impl Message {
             }
         }
 
-        match td.read_input() {
-            Ok(ReadInput::ReadInputAll(r_all)) => r.push(mqtt::Message {
+        match parsed_input {
+            Some(ReadInput::ReadInputAll(r_all)) => r.push(mqtt::Message {
                 topic: format!("{}/inputs/all", td.datalog),
                 retain: false,
                 payload: serde_json::to_string(&r_all)?,
             }),
-            Ok(ReadInput::ReadInput1(r1)) => r.push(mqtt::Message {
+            Some(ReadInput::ReadInput1(r1)) => r.push(mqtt::Message {
                 topic: format!("{}/inputs/1", td.datalog),
                 retain: false,
                 payload: serde_json::to_string(&r1)?,
             }),
-            Ok(ReadInput::ReadInput2(r2)) => {
+            Some(ReadInput::ReadInput2(r2)) => {
                 // Create the main message with all data
                 r.push(mqtt::Message {
                     topic: format!("{}/inputs/2", td.datalog),
@@ -188,7 +189,7 @@ impl Message {
                     payload: bat_com_type_str.to_string(),
                 });
             },
-            Ok(ReadInput::ReadInput3(r3)) => {
+            Some(ReadInput::ReadInput3(r3)) => {
                 // Create the main message with all data
                 r.push(mqtt::Message {
                     topic: format!("{}/inputs/3", td.datalog),
@@ -212,25 +213,39 @@ impl Message {
                     payload: status_inv_decoded.join(", "),
                 });
             },
-            Ok(ReadInput::ReadInput4(r4)) => r.push(mqtt::Message {
+            Some(ReadInput::ReadInput4(r4)) => r.push(mqtt::Message {
                 topic: format!("{}/inputs/4", td.datalog),
                 retain: false,
                 payload: serde_json::to_string(&r4)?,
             }),
-            Ok(ReadInput::ReadInput5(r5)) => r.push(mqtt::Message {
+            Some(ReadInput::ReadInput5(r5)) => r.push(mqtt::Message {
                 topic: format!("{}/inputs/5", td.datalog),
                 retain: false,
                 payload: serde_json::to_string(&r5)?,
             }),
-            Ok(ReadInput::ReadInput6(r6)) => r.push(mqtt::Message {
+            Some(ReadInput::ReadInput6(r6)) => r.push(mqtt::Message {
                 topic: format!("{}/inputs/6", td.datalog),
                 retain: false,
                 payload: serde_json::to_string(&r6)?,
             }),
-            Err(x) => warn!("ignoring {:?}", x),
+            None => {}
         }
 
         Ok(r)
+    }
+
+    pub fn for_input(
+        td: crate::eg4::packet::TranslatedData,
+        publish_individual: bool,
+    ) -> Result<Vec<Message>> {
+        let parsed_input = match td.read_input() {
+            Ok(parsed) => Some(parsed),
+            Err(err) => {
+                warn!("ignoring {:?}", err);
+                None
+            }
+        };
+        Self::for_input_with_parsed(td, publish_individual, parsed_input)
     }
 
     pub fn to_command(&self, inverter: config::Inverter) -> Result<Command> {
