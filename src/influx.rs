@@ -275,11 +275,8 @@ impl Influx {
                     }
                 }
                 Err(e) => {
-                    if let broadcast::error::RecvError::Closed = e {
-                        info!("InfluxDB channel closed, shutting down sender task");
+                    if !crate::channels::broadcast_recv_continue(e, "InfluxDB sender") {
                         break;
-                    } else {
-                        error!("Error receiving from InfluxDB channel: {}", e);
                     }
                 }
             }

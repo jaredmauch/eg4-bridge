@@ -121,7 +121,7 @@ impl Components {
 pub async fn run(config: Config) -> Result<()> {
     info!("Starting application initialization");
     trace!("Creating shutdown channel");
-    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel(1);
     let config = Arc::new(ConfigWrapper::from_config(config));
     trace!("Configuration loaded and wrapped in Arc");
 
@@ -132,7 +132,7 @@ pub async fn run(config: Config) -> Result<()> {
             error!("Failed to listen for ctrl+c: {}", e);
         }
         info!("Ctrl+C signal received, initiating shutdown");
-        let _ = shutdown_tx.send(());
+        let _ = shutdown_tx.send(()).await;
     });
 
     // Run the main application

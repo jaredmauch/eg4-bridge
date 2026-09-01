@@ -545,18 +545,19 @@ impl Mqtt {
         let mut receiver = self.channels.to_mqtt.subscribe();
 
         loop {
-            match receiver.recv().await? {
-                Shutdown => {
+            match receiver.recv().await {
+                Ok(Shutdown) => {
                     info!("MQTT sender received shutdown signal");
                     // Flush any remaining messages before exiting
                     let _ = client.disconnect().await;
                     break;
                 }
-                Message(message) => {
+                Ok(Message(message)) => {
                     let topic = format!("{}/{}", self.config.mqtt().namespace(), message.topic);
                     info!("publishing: {} = {}", topic, message.payload);
                     let payload = message.payload.as_bytes().to_vec();
                     let mut retry_count = 0;
+                    const MAX_PUBLISH_RETRIES: u32 = 3;
                     loop {
                         match client.publish(&topic, QoS::AtLeastOnce, message.retain, payload.as_slice()).await {
                             Ok(_) => {
@@ -569,14 +570,23 @@ impl Mqtt {
                                 break;
                             }
                             Err(err) => {
-                                error!("MQTT publish failed: {:?} - retrying in 10s (attempt {}/3)", err, retry_count + 1);
+                                retry_count += 1;
+                                error!("MQTT publish failed: {:?} - retrying in 10s (attempt {}/{})", err, retry_count, MAX_PUBLISH_RETRIES);
                                 if let Ok(mut stats) = self.shared_stats.lock() {
                                     stats.mqtt_errors += 1;
                                 }
+                                if retry_count >= MAX_PUBLISH_RETRIES {
+                                    error!("Giving up publishing to {} after {} attempts", topic, MAX_PUBLISH_RETRIES);
+                                    break;
+                                }
                                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                                retry_count += 1;
                             }
                         }
+                    }
+                }
+                Err(e) => {
+                    if !crate::channels::broadcast_recv_continue(e, "MQTT sender") {
+                        break;
                     }
                 }
             }

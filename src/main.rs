@@ -1,7 +1,7 @@
 use anyhow::Result;
 use log::{error, info};
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use std::error::Error;
 use std::time::Duration;
 use clap::Parser;
@@ -53,10 +53,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     info!("Starting eg4-bridge {}", CARGO_PKG_VERSION);
 
     // Create a channel for shutdown signaling
-    let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+    let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
     // Run the application
-    let _app_handle = tokio::spawn(async move {
+    let mut app_handle = tokio::spawn(async move {
         if let Err(e) = Coordinator::app(shutdown_rx, config.clone()).await {
             error!("Application error: {}", e);
             std::process::exit(1);
@@ -67,25 +67,35 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     if let Some(time) = args.time {
         info!("Runtime of {} seconds specified, will terminate automatically", time);
         let duration = Duration::from_secs(time);
-        
+
         select! {
             _ = tokio::time::sleep(duration) => {
-                info!("Runtime duration reached, terminating");
-                std::process::exit(0);
+                info!("Runtime duration reached, initiating shutdown");
             }
             _ = tokio::signal::ctrl_c() => {
-                info!("Ctrl+C received, terminating");
-                std::process::exit(0);
+                info!("Ctrl+C received, initiating shutdown");
+            }
+            _ = &mut app_handle => {
+                error!("Coordinator exited unexpectedly");
+                std::process::exit(1);
             }
         }
     } else {
-        // If no runtime specified, just wait for Ctrl+C
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            error!("Failed to listen for Ctrl+C: {}", e);
+        select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Ctrl+C received, initiating shutdown");
+            }
+            _ = &mut app_handle => {
+                error!("Coordinator exited unexpectedly");
+                std::process::exit(1);
+            }
         }
-        info!("Ctrl+C received, terminating");
-        std::process::exit(0);
     }
+
+    let _ = shutdown_tx.send(()).await;
+    if let Err(e) = app_handle.await {
+        error!("Failed to join application task: {}", e);
+    }
+    info!("Shutdown complete");
+    Ok(())
 }
-
-

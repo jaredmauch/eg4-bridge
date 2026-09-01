@@ -229,6 +229,12 @@ const READ_TIMEOUT_SECS: u64 = 1; // Multiplier for read_timeout from config
 const WRITE_TIMEOUT_SECS: u64 = 5; // Timeout for write operations
 const RECONNECT_DELAY_SECS: u64 = 5; // Delay before reconnection attempts
 
+#[derive(Debug, PartialEq, Eq)]
+enum ConnectionExit {
+    Shutdown,
+    Disconnected,
+}
+
 impl Inverter {
     pub fn new(config: ConfigWrapper, inverter: &config::Inverter, channels: Channels) -> Self {
         let message_timestamps = Arc::new(MessageTimestamps::new());
@@ -299,29 +305,61 @@ impl Inverter {
         let host = config.host();
         let port = config.port();
         debug!("Starting inverter {} at {}:{}", datalog, host, port);
-        
-        let mut attempt = 1;
-        while let Err(e) = self.connect().await {
-            error!("inverter {}: Connection attempt {} failed: {}", datalog, attempt, e);
-            debug!(
-                "inverter {}: Connection attempt {} failed with error: {:?}", 
-                datalog, 
-                attempt, 
-                e
-            );
-            info!(
-                "inverter {}: reconnecting in {}s (attempt {})", 
-                datalog,
-                RECONNECT_DELAY_SECS,
-                attempt
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(RECONNECT_DELAY_SECS)).await;
-            attempt += 1;
-        }
 
-        debug!("inverter {}: Successfully established connection at {}:{}", datalog, host, port);
-        info!("inverter {}: Successfully started and connected", datalog);
-        Ok(())
+        let mut attempt = 1u64;
+        loop {
+            match self.connect().await {
+                Ok((sender_handle, receiver_handle)) => {
+                    debug!(
+                        "inverter {}: Successfully established connection at {}:{}",
+                        datalog, host, port
+                    );
+                    info!("inverter {}: connected", datalog);
+                    attempt = 1;
+
+                    let mut sender_handle = sender_handle;
+                    let mut receiver_handle = receiver_handle;
+
+                    let (sender_exit, receiver_exit) = tokio::select! {
+                        s = &mut sender_handle => {
+                            receiver_handle.abort();
+                            let receiver_exit = receiver_handle.await.unwrap_or(ConnectionExit::Disconnected);
+                            (s.unwrap_or(ConnectionExit::Disconnected), receiver_exit)
+                        }
+                        r = &mut receiver_handle => {
+                            sender_handle.abort();
+                            let sender_exit = sender_handle.await.unwrap_or(ConnectionExit::Disconnected);
+                            (sender_exit, r.unwrap_or(ConnectionExit::Disconnected))
+                        }
+                    };
+
+                    if sender_exit == ConnectionExit::Shutdown
+                        || receiver_exit == ConnectionExit::Shutdown
+                    {
+                        info!("inverter {}: shutting down", datalog);
+                        return Ok(());
+                    }
+
+                    warn!(
+                        "inverter {}: connection lost, reconnecting in {}s",
+                        datalog, RECONNECT_DELAY_SECS
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(RECONNECT_DELAY_SECS)).await;
+                }
+                Err(e) => {
+                    error!(
+                        "inverter {}: Connection attempt {} failed: {}",
+                        datalog, attempt, e
+                    );
+                    info!(
+                        "inverter {}: reconnecting in {}s (attempt {})",
+                        datalog, RECONNECT_DELAY_SECS, attempt
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(RECONNECT_DELAY_SECS)).await;
+                    attempt += 1;
+                }
+            }
+        }
     }
 
     pub async fn stop(&self) {
@@ -334,7 +372,12 @@ impl Inverter {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
-    pub async fn connect(&self) -> Result<()> {
+    async fn connect(
+        &self,
+    ) -> Result<(
+        tokio::task::JoinHandle<ConnectionExit>,
+        tokio::task::JoinHandle<ConnectionExit>,
+    )> {
         debug!("Starting connect method for inverter at {}:{}", self.host, self.config().port());
         let inverter_config = self.config();
         debug!(
@@ -422,7 +465,7 @@ impl Inverter {
         let receiver_timestamps = self.message_timestamps.clone();
 
         // Start sender and receiver tasks
-        let _sender_handle = tokio::spawn(async move {
+        let sender_handle = tokio::spawn(async move {
             let inverter = Inverter {
                 config: sender_config,
                 host: sender_host,
@@ -433,7 +476,7 @@ impl Inverter {
             inverter.sender(writer).await
         });
 
-        let _receiver_handle = tokio::spawn(async move {
+        let receiver_handle = tokio::spawn(async move {
             let inverter = Inverter {
                 config: receiver_config,
                 host: receiver_host,
@@ -476,10 +519,10 @@ impl Inverter {
 
         // Store the task handles in the inverter for later use if needed
         debug!("Both sender and receiver tasks started successfully");
-        Ok(())
+        Ok((sender_handle, receiver_handle))
     }
 
-    async fn sender(&self, mut writer: tokio::net::tcp::OwnedWriteHalf) -> Result<()> {
+    async fn sender(&self, mut writer: tokio::net::tcp::OwnedWriteHalf) -> ConnectionExit {
         let mut receiver = self.channels.to_inverter.subscribe();
         let inverter_config = self.config();
         let frame_factory = TcpFrameFactory::new(inverter_config.datalog().expect("datalog must be set"));
@@ -492,7 +535,13 @@ impl Inverter {
                             // Update timestamp when sending packet
                             self.message_timestamps.update_sent();
                             
-                            let bytes = frame_factory.create_frame(&packet)?;
+                            let bytes = match frame_factory.create_frame(&packet) {
+                                Ok(bytes) => bytes,
+                                Err(e) => {
+                                    error!("Failed to create frame: {}", e);
+                                    return ConnectionExit::Disconnected;
+                                }
+                            };
 
                             // Use timeout for write operations
                             match tokio::time::timeout(
@@ -521,35 +570,41 @@ impl Inverter {
                                     
                                     // Ensure data is actually sent
                                     if let Err(_e) = writer.flush().await {
-                                        bail!("Failed to write to socket for {}", inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default());
+                                        warn!(
+                                            "Failed to flush socket for {}",
+                                            inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default()
+                                        );
+                                        return ConnectionExit::Disconnected;
                                     }
                                 }
-                                Ok(Err(_e)) => bail!("Failed to write packet for {}", inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default()),
-                                Err(_) => bail!("Write timeout after {} seconds for {}", WRITE_TIMEOUT_SECS, inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default()),
+                                Ok(Err(_e)) => return ConnectionExit::Disconnected,
+                                Err(_) => return ConnectionExit::Disconnected,
                             }
                         }
                         ChannelData::Shutdown => {
                             info!("inverter {}: sender received shutdown signal", 
                                 inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default());
-                            break;
+                            return ConnectionExit::Shutdown;
                         }
                         _ => {}
                     }
                 }
-                Err(_e) => {
+                Err(e) => {
+                    if crate::channels::broadcast_recv_continue(e, "inverter sender") {
+                        continue;
+                    }
                     warn!("eg4:inverter.rs {}: sender channel closed", 
                         inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default());
-                    break;
+                    return ConnectionExit::Disconnected;
                 }
             }
         }
-
-        info!("eg4:inverter.rs {}: sender exiting", 
-            inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default());
-        Ok(())
     }
 
-    async fn inverter_periodic_reader(&self, mut socket: tokio::net::tcp::OwnedReadHalf) -> Result<()> {
+    async fn inverter_periodic_reader(
+        &self,
+        mut socket: tokio::net::tcp::OwnedReadHalf,
+    ) -> ConnectionExit {
         use std::time::Duration;
         use tokio::time::timeout;
         use {bytes::BytesMut, tokio_util::codec::Decoder};
@@ -597,12 +652,13 @@ impl Inverter {
                 warn!("No data received from inverter {} for {} seconds, closing connection", 
                     inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default(),
                     time_since_received);
-                break;
+                return ConnectionExit::Disconnected;
             }
 
             // Check buffer capacity and prevent potential memory issues
             if buf.len() >= MAX_BUFFER_SIZE {
-                bail!("Buffer overflow: received data exceeds maximum size of {} bytes", MAX_BUFFER_SIZE);
+                error!("Buffer overflow: received data exceeds maximum size of {} bytes", MAX_BUFFER_SIZE);
+                return ConnectionExit::Disconnected;
             }
 
             // Use select! to efficiently wait for either data or shutdown
@@ -612,18 +668,19 @@ impl Inverter {
                     match msg {
                         Ok(ChannelData::Shutdown) => {
                             info!("Receiver received shutdown signal for {}", inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default());
-                            // Process any remaining data in buffer before exiting
-                            while let Some(packet) = decoder.decode_eof(&mut buf)? {
+                            while let Ok(Some(packet)) = decoder.decode_eof(&mut buf) {
                                 if let Err(_e) = self.handle_incoming_packet(packet) {
                                     warn!("Failed to handle final packet during shutdown");
                                 }
                             }
-                            break;
+                            info!("inverter {}: receiver exiting (shutdown)", inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default());
+                            return ConnectionExit::Shutdown;
                         }
                         Ok(_) => continue,
-                        Err(_e) => {
-                            warn!("Error receiving from channel");
-                            continue;
+                        Err(e) => {
+                            if !crate::channels::broadcast_recv_continue(e, "inverter receiver") {
+                                return ConnectionExit::Disconnected;
+                            }
                         }
                     }
                 }
@@ -641,22 +698,40 @@ impl Inverter {
                 } => {
                     let len = match read_result {
                         Ok(Ok(n)) => n,
-                        Ok(Err(_e)) => bail!("Read error"),
-                        Err(_) => bail!("No data received for {} seconds", inverter_config.read_timeout() * READ_TIMEOUT_SECS),
+                        Ok(Err(e)) => {
+                            warn!("Read error from inverter: {}", e);
+                            return ConnectionExit::Disconnected;
+                        }
+                        Err(_) => {
+                            warn!(
+                                "No data received for {} seconds",
+                                inverter_config.read_timeout() * READ_TIMEOUT_SECS
+                            );
+                            return ConnectionExit::Disconnected;
+                        }
                     };
 
                     if len == 0 {
                         // Try to process any remaining data before disconnecting
-                        while let Some(packet) = decoder.decode_eof(&mut buf)? {
+                        while let Ok(Some(packet)) = decoder.decode_eof(&mut buf) {
                             if let Err(_e) = self.handle_incoming_packet(packet) {
                                 warn!("Failed to handle final packet");
                             }
                         }
-                        bail!("Connection closed by peer");
+                        return ConnectionExit::Disconnected;
                     }
 
                     // Process received data
-                    while let Some(packet) = decoder.decode(&mut buf)? {
+                    loop {
+                        let packet = match decoder.decode(&mut buf) {
+                            Ok(Some(packet)) => packet,
+                            Ok(None) => break,
+                            Err(e) => {
+                                warn!("Failed to decode packet: {}", e);
+                                return ConnectionExit::Disconnected;
+                            }
+                        };
+
                         // Update timestamp when receiving packet
                         self.message_timestamps.update_received();
                         
@@ -718,13 +793,17 @@ impl Inverter {
                                     info!("Updating datalog serial from {} to {}", 
                                         inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default(),
                                         value);
-                                    self.update_datalog_serial(&value).await?;
+                                    if let Err(e) = self.update_datalog_serial(&value).await {
+                                        warn!("Failed to update datalog serial: {}", e);
+                                    }
                                 },
                                 "serial" => {
                                     info!("Updating inverter serial from {} to {}", 
                                         inverter_config.serial().map(|s| s.to_string()).unwrap_or_default(),
                                         value);
-                                    self.update_inverter_serial(&value).await?;
+                                    if let Err(e) = self.update_inverter_serial(&value).await {
+                                        warn!("Failed to update inverter serial: {}", e);
+                                    }
                                 },
                                 _ => {}
                             }
@@ -733,9 +812,6 @@ impl Inverter {
                 }
             }
         }
-
-        info!("inverter {}: receiver exiting", inverter_config.datalog().map(|s| s.to_string()).unwrap_or_default());
-        Ok(())
     }
 
     fn handle_incoming_packet(&self, packet: Packet) -> Result<()> {

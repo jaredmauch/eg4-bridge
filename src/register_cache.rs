@@ -51,9 +51,9 @@ impl RegisterCache {
 
         debug!("register_cache getter starting");
 
-        while let Ok(data) = receiver.recv().await {
-            match data {
-                ChannelData::ReadRegister(register, tx) => {
+        loop {
+            match receiver.recv().await {
+                Ok(ChannelData::ReadRegister(register, tx)) => {
                     let value = self.register_data.lock().unwrap()[register as usize];
                     debug!("Cache hit for register {}: value = {}", register, value);
                     if let Ok(mut tx) = tx.lock() {
@@ -62,8 +62,13 @@ impl RegisterCache {
                         }
                     }
                 }
-                ChannelData::Shutdown => break,
-                _ => (),
+                Ok(ChannelData::Shutdown) => break,
+                Ok(_) => (),
+                Err(e) => {
+                    if !crate::channels::broadcast_recv_continue(e, "register_cache getter") {
+                        break;
+                    }
+                }
             }
         }
 
@@ -75,14 +80,19 @@ impl RegisterCache {
 
         debug!("register_cache setter starting");
 
-        while let Ok(data) = receiver.recv().await {
-            match data {
-                ChannelData::RegisterData(register, value) => {
+        loop {
+            match receiver.recv().await {
+                Ok(ChannelData::RegisterData(register, value)) => {
                     debug!("Caching register {} with value {}", register, value);
                     self.register_data.lock().unwrap()[register as usize] = value;
                 }
-                ChannelData::Shutdown => break,
-                _ => (),
+                Ok(ChannelData::Shutdown) => break,
+                Ok(_) => (),
+                Err(e) => {
+                    if !crate::channels::broadcast_recv_continue(e, "register_cache setter") {
+                        break;
+                    }
+                }
             }
         }
 

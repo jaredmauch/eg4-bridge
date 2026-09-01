@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use log::{info, error, warn};
+use log::{info, error};
 use crate::eg4::packet::Packet;
 use crate::eg4::inverter::ChannelData;
 use crate::channels::Channels;
@@ -155,9 +155,10 @@ impl DatalogWriter {
                         _ => {}
                     }
                 }
-                Err(_) => {
-                    warn!("Datalog writer channel closed");
-                    break;
+                Err(e) => {
+                    if !crate::channels::broadcast_recv_continue(e, "datalog writer") {
+                        break;
+                    }
                 }
             }
         }

@@ -42,3 +42,18 @@ impl Channels {
         broadcast::channel(2048).0
     }
 }
+
+/// Handle a broadcast receiver error. Returns `true` if the receive loop should continue,
+/// `false` if it should exit (channel closed).
+pub fn broadcast_recv_continue(err: broadcast::error::RecvError, context: &str) -> bool {
+    match err {
+        broadcast::error::RecvError::Closed => {
+            info!("{} channel closed", context);
+            false
+        }
+        broadcast::error::RecvError::Lagged(n) => {
+            warn!("{} channel lagged, missed {} messages", context, n);
+            true
+        }
+    }
+}

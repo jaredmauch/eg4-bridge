@@ -30,6 +30,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::sync::Once;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tokio::sync::broadcast::error::TryRecvError;
 
 /// Shared baseline: no file-backed registers, no datalog writer, no DB, inverters off (no TCP).
@@ -77,6 +78,7 @@ async fn publishes_read_hold_mqtt() {
     let channels = Channels::new();
     let mut coordinator = Coordinator::new(config, channels.clone());
     let coord_stop = coordinator.clone();
+    let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
     let tf = async move {
         let mut to_influx = channels.to_influx.subscribe();
@@ -116,11 +118,12 @@ async fn publishes_read_hold_mqtt() {
         assert_eq!(to_db.try_recv(), Err(TryRecvError::Empty));
 
         coord_stop.stop();
+        let _ = shutdown_tx.send(()).await;
 
         Ok::<(), anyhow::Error>(())
     };
 
-    futures::try_join!(coordinator.start(), tf).unwrap();
+    futures::try_join!(coordinator.start(shutdown_rx), tf).unwrap();
 }
 
 #[tokio::test]
@@ -153,6 +156,7 @@ async fn forwards_read_input_all_to_mqtt_and_influx() {
     let channels = Channels::new();
     let mut coordinator = Coordinator::new(config, channels.clone());
     let coord_stop = coordinator.clone();
+    let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
     let tf = async move {
         let mut to_influx = channels.to_influx.subscribe();
@@ -185,6 +189,7 @@ async fn forwards_read_input_all_to_mqtt_and_influx() {
         assert_eq!(d["raw_data"]["0"], "0001");
 
         coord_stop.stop();
+        let _ = shutdown_tx.send(()).await;
 
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         mock.assert();
@@ -192,7 +197,7 @@ async fn forwards_read_input_all_to_mqtt_and_influx() {
         Ok::<(), anyhow::Error>(())
     };
 
-    futures::try_join!(coordinator.start(), tf).unwrap();
+    futures::try_join!(coordinator.start(shutdown_rx), tf).unwrap();
 }
 
 #[tokio::test]
@@ -230,6 +235,7 @@ async fn forwards_read_input_all_to_influx_and_database_channels() {
     let channels = Channels::new();
     let mut coordinator = Coordinator::new(config, channels.clone());
     let coord_stop = coordinator.clone();
+    let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
     let tf = async move {
         let mut to_influx = channels.to_influx.subscribe();
@@ -259,13 +265,14 @@ async fn forwards_read_input_all_to_influx_and_database_channels() {
         assert_eq!(input_all.soc, 1);
 
         coord_stop.stop();
+        let _ = shutdown_tx.send(()).await;
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         mock.assert();
 
         Ok::<(), anyhow::Error>(())
     };
 
-    futures::try_join!(coordinator.start(), tf).unwrap();
+    futures::try_join!(coordinator.start(shutdown_rx), tf).unwrap();
 }
 
 #[tokio::test]
@@ -288,6 +295,7 @@ async fn aggregates_six_read_input_blocks_and_publishes_one_database_row() {
     let channels = Channels::new();
     let mut coordinator = Coordinator::new(config, channels.clone());
     let coord_stop = coordinator.clone();
+    let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
     let tf = async move {
         let mut to_db = channels.to_database.subscribe();
@@ -335,10 +343,11 @@ async fn aggregates_six_read_input_blocks_and_publishes_one_database_row() {
         assert_eq!(to_db.try_recv(), Err(TryRecvError::Empty));
 
         coord_stop.stop();
+        let _ = shutdown_tx.send(()).await;
         Ok::<(), anyhow::Error>(())
     };
 
-    futures::try_join!(coordinator.start(), tf).unwrap();
+    futures::try_join!(coordinator.start(shutdown_rx), tf).unwrap();
 }
 
 #[tokio::test]
@@ -363,6 +372,7 @@ async fn mqtt_read_hold_command_reaches_inverter_and_publishes_hold() {
     let channels = Channels::new();
     let mut coordinator = Coordinator::new(config, channels.clone());
     let coord_stop = coordinator.clone();
+    let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
     let accept_task = tokio::spawn(async move {
         loop {
@@ -429,10 +439,11 @@ async fn mqtt_read_hold_command_reaches_inverter_and_publishes_hold() {
 
         coord_stop.stop();
         accept_task.abort();
+        let _ = shutdown_tx.send(()).await;
 
         Ok::<(), anyhow::Error>(())
     };
 
-    futures::try_join!(coordinator.start(), tf).unwrap();
+    futures::try_join!(coordinator.start(shutdown_rx), tf).unwrap();
 }
 

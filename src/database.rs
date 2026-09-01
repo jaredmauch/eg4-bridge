@@ -125,9 +125,9 @@ impl Database {
         loop {
             use ChannelData::*;
 
-            match receiver.recv().await? {
-                Shutdown => break,
-                ReadInputAll(data) => {
+            match receiver.recv().await {
+                Ok(Shutdown) => break,
+                Ok(ReadInputAll(data)) => {
                     let mut retry_count = 0;
                     let max_retries = 3;
                     let mut backoff = 1;
@@ -156,6 +156,11 @@ impl Database {
                     
                     if retry_count == max_retries {
                         error!("Failed to insert data after {} retries", max_retries);
+                    }
+                }
+                Err(e) => {
+                    if !crate::channels::broadcast_recv_continue(e, "database inserter") {
+                        break;
                     }
                 }
             }

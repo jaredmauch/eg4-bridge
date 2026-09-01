@@ -241,7 +241,7 @@ impl Coordinator {
         let _ = self.channels.to_register_cache.send(register_cache::ChannelData::Shutdown);
     }
 
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start(&mut self, mut shutdown_rx: mpsc::Receiver<()>) -> Result<()> {
         // Initialize all components in dependency order
         info!("Initializing components...");
         
@@ -400,18 +400,25 @@ impl Coordinator {
             .map(|inverter| Inverter::new((*self.config).clone(), &inverter, self.channels.clone()))
             .collect();
         
-        // Start each inverter
+        // Start each inverter in a background task (start() runs until shutdown or fatal error)
         for inverter in inverters {
-            if let Err(e) = inverter.start().await {
-                error!("Failed to start inverter: {}", e);
-                continue;
-            }
+            tokio::spawn(async move {
+                if let Err(e) = inverter.start().await {
+                    error!("Inverter task exited with error: {}", e);
+                }
+            });
         }
-        info!("All inverters started successfully");
+        info!("All inverter tasks started");
 
         info!("Starting main coordinator loop");
         loop {
             tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    info!("Shutdown signal received");
+                    self.stop();
+                    break;
+                }
+
                 // Process data from inverters
                 msg = from_inverter_rx.recv() => {
                     match msg {
@@ -450,8 +457,9 @@ impl Coordinator {
                             );
                         }
                         Err(e) => {
-                            error!("Error receiving from inverter channel: {}", e);
-                            break;
+                            if !crate::channels::broadcast_recv_continue(e, "coordinator from_inverter") {
+                                break;
+                            }
                         }
                     }
                 }
@@ -474,8 +482,9 @@ impl Coordinator {
                             break;
                         }
                         Err(e) => {
-                            error!("Error receiving from coordinator channel: {}", e);
-                            break;
+                            if !crate::channels::broadcast_recv_continue(e, "coordinator to_coordinator") {
+                                break;
+                            }
                         }
                     }
                 }
@@ -492,7 +501,9 @@ impl Coordinator {
                             debug!("from_mqtt shutdown");
                         }
                         Err(e) => {
-                            error!("Error receiving from MQTT channel: {}", e);
+                            if !crate::channels::broadcast_recv_continue(e, "coordinator from_mqtt") {
+                                break;
+                            }
                         }
                     }
                 }
@@ -640,7 +651,7 @@ impl Coordinator {
         self.channels.to_influx.subscribe().is_closed() || 
         self.channels.to_mqtt.subscribe().is_closed() || 
         self.channels.to_database.subscribe().is_closed() ||
-        self.channels.read_register_cache.subscribe().is_closed()
+        self.channels.to_register_cache.subscribe().is_closed()
     }
 
     async fn process_message(&self, message: mqtt::Message) -> Result<()> {
@@ -1031,9 +1042,9 @@ impl Coordinator {
         .await
     }
 
-    pub async fn app(_shutdown_rx: broadcast::Receiver<()>, config: Arc<ConfigWrapper>) -> Result<()> {
+    pub async fn app(shutdown_rx: mpsc::Receiver<()>, config: Arc<ConfigWrapper>) -> Result<()> {
         let channels = Channels::new();
         let mut coordinator = Self::new(config, channels);
-        coordinator.start().await
+        coordinator.start(shutdown_rx).await
     }
 }
